@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Node / React
+node_modules/
+rl_react_dashboard/rl-dashboard/node_modules/
+rl_react_dashboard/rl-dashboard/dist/
+rl_react_dashboard/rl-dashboard/.vite/
+
+# Environment & secrets
+.env
+.env.*
+*.env
+!.env.example
+secrets.json
+credentials.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & data
+*.log
+logs/
+*.sqlite
+*.db
+*.pkl
+*.pt
+*.pth
+checkpoints/
+models/
+saved_models/
+runs/
+wandb/
+
+# Claude Code internal
+.claude/
+
+# Build artifacts
+*.pyc
+*.pyo
+dist/
+build/

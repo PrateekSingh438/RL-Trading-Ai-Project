@@ -1,0 +1,15 @@
+# REPLACE: requirements.txt
+# Core (required)
+numpy>=1.24.0
+pandas>=2.0.0
+yfinance>=0.2.28
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.6
+
+# Optional: PyTorch (MUCH better training — install if possible)
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Or with GPU: pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# Optional: visualization
+matplotlib>=3.7.0
