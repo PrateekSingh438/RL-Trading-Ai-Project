@@ -1,6 +1,6 @@
 # Risk-Aware Multi-Asset RL Trading System
 
-A production-grade reinforcement learning trading agent using an ensemble of **PPO + SAC with LSTM**, featuring market regime detection, sentiment validation, and a real-time dashboard.
+A production-grade reinforcement learning trading system using a **PPO + SAC ensemble with LSTM**, featuring real-time market data, FinBERT AI sentiment analysis, Gemini-powered portfolio analysis, regime detection, and a live React dashboard.
 
 ## Architecture
 
@@ -8,133 +8,172 @@ A production-grade reinforcement learning trading agent using an ensemble of **P
 R = w₁·R_ann − w₂·σ_down + w₃·D_ret + w₄·T_ry
 ```
 
+## System Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    React Dashboard                       │
+│  Live Prices · KPI Cards · Charts · AI Analyst · Logs   │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP / WebSocket
+┌────────────────────────▼────────────────────────────────┐
+│              FastAPI Backend  (server/app.py)            │
+│  /portfolio  /market  /sentiment  /agents  /analysis     │
+└──────┬──────────┬──────────┬──────────┬─────────────────┘
+       │          │          │          │
+  RL Agent   yfinance   FinBERT     Gemini
+  PPO+SAC    Live Px    Sentiment   AI Analysis
+  Ensemble   + Sim      Analysis    (free tier)
+```
+
 ## Folder Structure
 
 ```
 rl-trading-system/
 │
-├── main.py                          # Entry point — runs full pipeline
+├── main.py                      # Entry point — runs full pipeline
+├── .env                         # API keys (never commit this)
 │
 ├── config/
-│   ├── __init__.py
-│   └── settings.py                  # All hyperparameters, asset lists, reward weights
+│   └── settings.py              # All hyperparameters, asset lists, reward weights
 │
 ├── data/
-│   ├── __init__.py
-│   └── pipeline.py                  # Data fetching (yfinance), 14 technical indicators,
-│                                    # turbulence index, normalization, sliding windows
+│   └── pipeline.py              # yfinance fetching, 14 technical indicators,
+│                                #   turbulence index, normalization, sliding windows
 │
 ├── env/
-│   ├── __init__.py
-│   └── trading_env.py               # Gym-style multi-asset trading environment
-│                                    # (observation space, action execution, transaction costs)
+│   └── trading_env.py           # Gym-style multi-asset trading environment
+│                                #   (observation space, action execution, transaction costs)
 │
 ├── agents/
-│   ├── __init__.py
-│   ├── networks.py                  # LSTM cells, LSTM feature extractor, MLP,
-│   │                                # Actor-Critic network, Q-Network
-│   ├── ppo_agent.py                 # PPO with GAE, clipped surrogate, rollout buffer
-│   ├── sac_agent.py                 # SAC with twin Q-nets, auto entropy, replay memory
-│   └── ensemble.py                  # Weighted PPO+SAC ensemble, meta-policy network,
-│                                    # adaptive weight updates
+│   ├── networks.py              # LSTM cells, Actor-Critic, Q-Network
+│   ├── ppo_agent.py             # PPO with GAE, clipped surrogate, rollout buffer
+│   ├── sac_agent.py             # SAC with twin Q-nets, auto entropy, replay memory
+│   └── ensemble.py              # Weighted PPO+SAC ensemble, meta-policy, adaptive weights
 │
 ├── rewards/
-│   ├── __init__.py
-│   └── composite_reward.py          # Composite reward function (Eq. 6 from paper):
-│                                    #   R_ann, σ_down, D_ret, T_ry
-│                                    #   + normalization + reward shaping
+│   └── composite_reward.py      # Composite reward: R_ann, σ_down, D_ret, T_ry
 │
 ├── risk/
-│   ├── __init__.py
-│   └── risk_manager.py              # Position sizing (Kelly, volatility-based),
-│                                    # drawdown protection, stop-loss/take-profit,
-│                                    # cooldown manager, risk parity, leverage limits
+│   └── risk_manager.py          # Kelly/volatility sizing, drawdown halt,
+│                                #   stop-loss/take-profit, cooldown, risk parity
 │
 ├── regime/
-│   ├── __init__.py
-│   └── detector.py                  # HMM-based and rule-based regime detection
-│                                    # (Bull, Bear, Sideways, High Volatility)
+│   └── detector.py              # HMM + rule-based regime detection
+│                                #   (Bull, Bear, Sideways, High Volatility)
 │
 ├── sentiment/
-│   ├── __init__.py
-│   └── analyzer.py                  # News generation, sentiment analysis,
-│                                    # decision validator (conflict → reduce position),
-│                                    # trade explainer (human-readable reasoning)
+│   └── analyzer.py              # FinBERT AI sentiment (ProsusAI/finbert),
+│                                #   live news fetcher, trade explainer
+│                                #   falls back to keyword scoring if FinBERT absent
 │
 ├── evaluation/
-│   ├── __init__.py
-│   └── metrics.py                   # Sharpe, Sortino, max drawdown, alpha, beta,
-│                                    # win rate, Calmar, profit factor
-│                                    # + walk-forward backtester
+│   └── metrics.py               # Sharpe, Sortino, max drawdown, alpha, beta,
+│                                #   win rate, Calmar, profit factor, walk-forward backtest
 │
 ├── training/
-│   ├── __init__.py
-│   └── pipeline.py                  # End-to-end orchestrator: data → train → eval
-│                                    # → dashboard data generation
+│   └── pipeline.py              # End-to-end orchestrator: data → train → eval
 │
-├── dashboard/
-│   └── rl_trading_dashboard.jsx     # React dashboard (portfolio chart, trades,
-│                                    # sentiment feed, regime timeline, explanations)
+├── server/
+│   └── app.py                   # FastAPI server — all REST endpoints + WebSocket
 │
-├── utils/
-│   └── __init__.py
-│
-├── models/                          # Saved model weights (auto-created)
-├── output/                          # Dashboard JSON data (auto-created)
+├── models/                      # Saved model weights (auto-created)
+├── output/                      # Dashboard JSON data (auto-created)
 │
 ├── requirements.txt
+├── SETUP.md
 ├── .gitignore
 └── README.md
 ```
 
 ## Quick Start
 
+### Backend
+
 ```bash
-# 1. Clone the repo
-git clone https://github.com/YOUR_USERNAME/rl-trading-system.git
 cd rl-trading-system
 
-# 2. Install dependencies
+# 1. Install dependencies
 pip install -r requirements.txt
 
-# 3. Run training + evaluation
-python main.py
+# 2. Install PyTorch (CPU) for FinBERT sentiment
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-# 4. View dashboard
-#    Open the generated .jsx in Claude.ai or build with React
+# 3. Add your free Gemini API key (get one at aistudio.google.com)
+#    Edit .env and set:
+#    GEMINI_API_KEY=AIza...
+
+# 4. Start the API server
+python -m uvicorn server.app:app --reload --port 8000
+```
+
+### Frontend (React Dashboard)
+
+```bash
+cd rl_react_dashboard/rl-dashboard
+npm install
+npm run dev
+# Open http://localhost:5173
 ```
 
 ## Key Features
 
-| Feature | Implementation |
+| Feature | Details |
 |---|---|
 | **RL Agents** | PPO (stable) + SAC (exploratory) ensemble with LSTM backbone |
 | **Reward Function** | Composite: annualized return, downside deviation, differential return, Treynor ratio |
 | **Risk Management** | Kelly sizing, volatility sizing, max drawdown halt, stop-loss, take-profit, cooldown |
-| **Regime Detection** | HMM + rule-based (bull/bear/sideways/high-volatility) |
-| **Sentiment** | News analysis, confidence scoring, decision validation (conflict → reduce position) |
-| **Explainability** | Per-trade reasoning combining technical signals, sentiment, regime, and agent consensus |
-| **Evaluation** | Sharpe, Sortino, max drawdown, alpha, beta, win rate, Calmar ratio |
+| **Regime Detection** | HMM + rule-based: bull / bear / sideways / high-volatility |
+| **AI Sentiment** | FinBERT (`ProsusAI/finbert`) — real probability scores, falls back to keyword scoring |
+| **Live Prices** | yfinance per-ticker fast_info, simulated seed while market is closed |
+| **AI Portfolio Analyst** | Gemini 2.0 Flash (free tier) — streaming natural language portfolio report |
+| **Dashboard** | React + Vite + Tailwind — live KPIs, candlestick chart, signals, news, logs |
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/v1/portfolio/metrics` | Portfolio KPIs (value, Sharpe, drawdown, …) |
+| GET | `/api/v1/portfolio/equity` | Equity curve history |
+| GET | `/api/v1/portfolio/positions` | Open positions |
+| GET | `/api/v1/portfolio/trades` | Trade signals |
+| GET | `/api/v1/portfolio/analysis` | Streaming Gemini AI portfolio report |
+| GET | `/api/v1/market/live` | Live prices (yfinance) |
+| GET | `/api/v1/market/regime` | Current market regime |
+| GET | `/api/v1/market/symbols` | Tracked tickers |
+| GET | `/api/v1/sentiment/news` | Live news with FinBERT sentiment |
+| GET | `/api/v1/sentiment/status` | FinBERT model status |
+| POST | `/api/v1/agents/control` | Start / stop the RL agent |
+| GET | `/api/v1/agents/status` | Agent running status + training progress |
+| WS | `/ws` | Real-time WebSocket stream |
 
 ## Configuration
 
-All parameters are centralized in `config/settings.py`:
+All parameters are in `config/settings.py`:
 
 ```python
 from config.settings import CONFIG
 
-# Modify assets
-CONFIG.data.tickers = ["AAPL", "GOOGL", "MSFT"]
+# Assets
+CONFIG.data.tickers = ["AAPL", "GOOGL", "MSFT", "NFLX", "TSLA"]
 
-# Adjust reward weights
+# Reward weights
 CONFIG.reward.w1 = 0.40  # Annualized return
 CONFIG.reward.w2 = 0.30  # Downside penalty
 CONFIG.reward.w3 = 0.15  # Differential return
 CONFIG.reward.w4 = 0.15  # Treynor ratio
 
 # Risk constraints
-CONFIG.trading.max_drawdown_threshold = 0.10  # 10% halt
-CONFIG.trading.transaction_cost = 0.001       # 0.1%
+CONFIG.trading.max_drawdown_threshold = 0.15  # 15% halt
+CONFIG.trading.stop_loss_pct           = 0.05  # 5% stop loss
+CONFIG.trading.take_profit_pct         = 0.15  # 15% take profit
+CONFIG.trading.transaction_cost        = 0.001 # 0.1%
+```
+
+## Environment Variables (.env)
+
+```
+GEMINI_API_KEY=AIza...   # Free key from aistudio.google.com
 ```
 
 ## License

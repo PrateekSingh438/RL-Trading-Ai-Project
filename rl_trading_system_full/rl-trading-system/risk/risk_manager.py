@@ -119,9 +119,11 @@ class DrawdownProtection:
             self.peak_value = portfolio_value
 
         if self.peak_value > 0:
-            current_dd = (self.peak_value - portfolio_value) / self.peak_value
+            current_dd = max(0.0, (self.peak_value - portfolio_value) / self.peak_value)
         else:
             current_dd = 0.0
+        # Clamp to [0, 1] — portfolio can't have > 100% drawdown for halt purposes
+        current_dd = min(current_dd, 1.0)
 
         if current_dd >= self.max_drawdown:
             self.is_halted = True
@@ -305,12 +307,14 @@ class RiskManager:
                 actions[i] *= 0.1
 
         # 4. Apply position constraints
-        target_positions = actions * (portfolio_value / (current_prices + 1e-10))
+        # Use abs value so a negative portfolio_value doesn't flip action signs
+        effective_value = max(abs(portfolio_value), 1.0)
+        target_positions = actions * (effective_value / (current_prices + 1e-10))
         constrained = self.position_sizer.apply_constraints(
-            target_positions, portfolio_value, current_prices
+            target_positions, effective_value, current_prices
         )
         # Convert back to [-1, 1] actions
-        max_pos = (self.position_sizer.max_position_pct * portfolio_value) / (current_prices + 1e-10)
+        max_pos = (self.position_sizer.max_position_pct * effective_value) / (current_prices + 1e-10)
         for i in range(self.n_assets):
             if max_pos[i] > 0:
                 actions[i] = np.clip(constrained[i] / max_pos[i], -1, 1)

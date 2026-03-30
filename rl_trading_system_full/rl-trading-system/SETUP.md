@@ -2,76 +2,136 @@
 
 ## Prerequisites
 
-- Python 3.9+ installed
-- pip (comes with Python)
-- Git (optional, for cloning)
+- Python 3.9+
+- Node.js 18+ (for the React dashboard)
+- pip
 
-## Step 1: Extract the project
+---
+
+## Backend Setup
+
+### Step 1: Navigate to the backend folder
 
 ```bash
-# If you downloaded the tar.gz from Claude:
-tar xzf rl_trading_system.tar.gz
 cd rl-trading-system
 ```
 
-## Step 2: Create a virtual environment (recommended)
+### Step 2: Create a virtual environment (recommended)
 
 ```bash
-# Create venv
 python -m venv venv
 
-# Activate it:
-# On Mac/Linux:
-source venv/bin/activate
-# On Windows:
+# Activate:
+# Windows:
 venv\Scripts\activate
+# Mac/Linux:
+source venv/bin/activate
 ```
 
-## Step 3: Install dependencies
+### Step 3: Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Step 4: Run the system
+### Step 4: Install PyTorch for FinBERT sentiment (recommended)
 
 ```bash
-python main.py
+# CPU (works on any machine):
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# GPU (if you have CUDA 12.1):
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
 
-This will:
-1. Generate synthetic market data (or use yfinance if available)
-2. Train the PPO + SAC ensemble agent for 5 episodes
-3. Run backtesting evaluation on the test set
-4. Print performance metrics (Sharpe, Sortino, max drawdown, etc.)
-5. Save dashboard data to output/dashboard_data.json
+Without PyTorch the system still runs — it falls back to keyword-based sentiment scoring.
 
-## Optional: Use real market data
+### Step 5: Add your Gemini API key
+
+Get a **free** key at [aistudio.google.com](https://aistudio.google.com), then edit `.env`:
+
+```
+GEMINI_API_KEY=AIza...
+```
+
+This enables the AI Portfolio Analyst feature in the dashboard. The rest of the system works without it.
+
+### Step 6: Start the API server
 
 ```bash
-pip install yfinance
-python main.py
+python -m uvicorn server.app:app --reload --port 8000
 ```
 
-If yfinance is installed and has internet access, it will automatically
-fetch real historical data from Yahoo Finance instead of synthetic data.
+The server will be available at `http://localhost:8000`.
 
-## Optional: Change configuration
+---
 
-Edit config/settings.py before running:
+## Frontend Setup (React Dashboard)
+
+### Step 1: Navigate to the dashboard folder
+
+```bash
+cd rl_react_dashboard/rl-dashboard
+```
+
+### Step 2: Install dependencies
+
+```bash
+npm install
+```
+
+### Step 3: Start the dev server
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+---
+
+## Using the Dashboard
+
+1. **Start the backend** (`uvicorn server.app:app --reload --port 8000`)
+2. **Start the frontend** (`npm run dev`)
+3. Open the dashboard in your browser
+4. Click **Start Agent** to begin trading simulation
+5. Use the **Analyze** button in the AI Portfolio Analyst panel for a Gemini-powered report
+
+---
+
+## Configuration
+
+Edit `config/settings.py` to customize:
 
 ```python
-# Change assets
-CONFIG.data.tickers = ["AAPL", "AMZN", "META"]
+from config.settings import CONFIG
 
-# Change training duration
-CONFIG.training.total_timesteps = 1_000_000
+# Change tracked assets
+CONFIG.data.tickers = ["AAPL", "GOOGL", "MSFT", "NFLX", "TSLA"]
 
 # Adjust reward weights
-CONFIG.reward.w1 = 0.40  # More weight on returns
-CONFIG.reward.w2 = 0.30  # More weight on downside protection
+CONFIG.reward.w1 = 0.40  # Annualized return
+CONFIG.reward.w2 = 0.30  # Downside penalty
+CONFIG.reward.w3 = 0.15  # Differential return
+CONFIG.reward.w4 = 0.15  # Treynor ratio
 
-# Stricter risk management
-CONFIG.trading.max_drawdown_threshold = 0.10  # 10% halt
-CONFIG.trading.stop_loss_pct = 0.03           # 3% stop loss
+# Risk controls
+CONFIG.trading.max_drawdown_threshold = 0.15  # halt at 15% drawdown
+CONFIG.trading.stop_loss_pct           = 0.05  # 5% stop loss per position
+CONFIG.trading.take_profit_pct         = 0.15  # 15% take profit
+CONFIG.trading.transaction_cost        = 0.001 # 0.1% per trade
 ```
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `GEMINI_API_KEY is not set` | Add key to `.env` and restart server |
+| `google-generativeai not installed` | `pip install google-generativeai` |
+| `python-dotenv not installed` | `pip install python-dotenv` |
+| Live prices show "SIM" | Market is closed — simulated prices are used automatically |
+| FinBERT not loading | Install PyTorch (Step 4 above); keyword fallback is used otherwise |
+| Dashboard can't connect | Make sure backend is running on port 8000 |

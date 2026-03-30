@@ -1,12 +1,14 @@
 """
-Sentiment & News Module v2
+Sentiment & News Module v3
 ==========================
-Fetches REAL news via yfinance + keyword-based sentiment scoring.
-Falls back to template-based simulation when live fetch fails.
+Fetches REAL news via yfinance + AI-based sentiment scoring (FinBERT).
+Falls back to keyword scoring if transformers/torch not installed,
+and to template simulation when live fetch fails entirely.
 
 Key classes
 -----------
-LiveNewsFetcher   – real headlines from yfinance + keyword VADER scorer
+FinBERTAnalyzer   – ProsusAI/finbert model (lazy-loaded, singleton)
+LiveNewsFetcher   – real headlines from yfinance + FinBERT scorer
 NewsGenerator     – template simulation (fallback / testing)
 SentimentAnalyzer – aggregates NewsItem lists into SentimentReport
 DecisionValidator – adjusts RL action based on sentiment
@@ -33,6 +35,7 @@ class NewsItem:
     impact_score: float = 0.0        # -1 to +1
     url: str = ""
     is_live: bool = False            # True = fetched from real API
+    ai_scored: bool = False          # True = scored by FinBERT, False = keyword fallback
 
 
 @dataclass
@@ -49,7 +52,102 @@ class SentimentReport:
     live_data: bool = False          # True if at least one real headline
 
 
-# ─── Keyword scorer ───────────────────────────────────────────────────────────
+# ─── FinBERT AI scorer ────────────────────────────────────────────────────────
+
+class FinBERTAnalyzer:
+    """
+    Singleton wrapper around ProsusAI/finbert.
+    Lazy-loads the model on first use.
+    Falls back to keyword scoring if transformers/torch are not installed.
+    """
+    _instance: Optional["FinBERTAnalyzer"] = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._model      = None
+            cls._instance._tokenizer  = None
+            cls._instance._label_map  = None   # id → "positive"/"negative"/"neutral"
+            cls._instance._pos_idx    = None
+            cls._instance._neg_idx    = None
+            cls._instance._available  = None   # None = not yet tried
+        return cls._instance
+
+    def _load(self) -> bool:
+        """Try to load FinBERT; return True on success."""
+        if self._available is not None:
+            return self._available
+        try:
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            import torch  # noqa: F401
+            model_id = "ProsusAI/finbert"
+            self._tokenizer = AutoTokenizer.from_pretrained(model_id)
+            self._model = AutoModelForSequenceClassification.from_pretrained(model_id)
+            self._model.eval()
+            # Build label lookup
+            self._label_map = {
+                idx: lbl.lower()
+                for idx, lbl in self._model.config.id2label.items()
+            }
+            inv = {v: k for k, v in self._label_map.items()}
+            self._pos_idx = inv.get("positive", 0)
+            self._neg_idx = inv.get("negative", 1)
+            self._available = True
+            print("[FinBERT] Model loaded successfully.")
+        except Exception as e:
+            print(f"[FinBERT] Not available ({e}); using keyword fallback.")
+            self._available = False
+        return self._available
+
+    def score(self, texts: List[str]) -> List[Tuple[str, float, float, bool]]:
+        """
+        Score a batch of texts.
+        Returns list of (sentiment, confidence, impact_score, ai_scored).
+        """
+        if not self._load():
+            return [(*_keyword_score(t), False) for t in texts]
+
+        import torch
+        results: List[Tuple[str, float, float, bool]] = []
+        batch_size = 8
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            try:
+                inputs = self._tokenizer(
+                    batch,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512,
+                    padding=True,
+                )
+                with torch.no_grad():
+                    logits = self._model(**inputs).logits
+                probs = torch.softmax(logits, dim=-1).numpy()
+                for p in probs:
+                    pred_idx  = int(p.argmax())
+                    sentiment = self._label_map[pred_idx]
+                    confidence = round(float(p[pred_idx]), 3)
+                    impact = round(float(p[self._pos_idx]) - float(p[self._neg_idx]), 3)
+                    results.append((sentiment, confidence, impact, True))
+            except Exception:
+                # If batch fails, fall back per-item
+                for t in batch:
+                    results.append((*_keyword_score(t), False))
+        return results
+
+    def score_one(self, text: str) -> Tuple[str, float, float, bool]:
+        return self.score([text])[0]
+
+    @property
+    def is_available(self) -> bool:
+        return self._load()
+
+
+# Singleton convenience
+_finbert = FinBERTAnalyzer()
+
+
+# ─── Keyword scorer (fallback) ────────────────────────────────────────────────
 
 _POS_KW = {
     "surge", "soar", "rally", "beat", "record", "profit", "gain", "rise", "jump",
@@ -132,27 +230,32 @@ class LiveNewsFetcher:
             import yfinance as yf
             tk = yf.Ticker(ticker)
             raw = tk.news or []
+            articles = [a for a in raw[:max_items] if a.get("title")]
+            if not articles:
+                return []
+
+            # Batch-score all titles+summaries with FinBERT in one pass
+            texts = [
+                a.get("title", "") + ". " + a.get("summary", a.get("title", ""))
+                for a in articles
+            ]
+            scores = _finbert.score(texts)
+
             items: List[NewsItem] = []
-            for article in raw[:max_items]:
-                title = article.get("title", "")
-                if not title:
-                    continue
-                source = article.get("publisher", "Yahoo Finance")
+            for article, (sentiment, confidence, impact, ai_scored) in zip(articles, scores):
                 pub_ts = article.get("providerPublishTime", int(now))
-                url = article.get("link", "")
-                summary = article.get("summary", title)
-                sentiment, confidence, impact = _keyword_score(title + " " + summary)
                 items.append(NewsItem(
-                    title=title,
-                    source=source,
+                    title=article.get("title", ""),
+                    source=article.get("publisher", "Yahoo Finance"),
                     timestamp=datetime.fromtimestamp(pub_ts).strftime("%Y-%m-%d %H:%M"),
                     ticker=ticker,
                     sentiment=sentiment,
                     confidence=confidence,
-                    summary=summary[:200],
+                    summary=article.get("summary", article.get("title", ""))[:200],
                     impact_score=impact,
-                    url=url,
+                    url=article.get("link", ""),
                     is_live=True,
+                    ai_scored=ai_scored,
                 ))
             self._cache[ticker] = (items, now)
             return items

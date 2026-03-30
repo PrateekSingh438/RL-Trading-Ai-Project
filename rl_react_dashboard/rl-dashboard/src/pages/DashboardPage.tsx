@@ -102,13 +102,22 @@ function LiveTicker({ prices }: { prices: Record<string, any> }) {
 
   if (!Object.keys(prices).length) return null;
 
+  const allSimulated = Object.values(prices).every((d: any) => d.simulated);
+  const anyLive      = Object.values(prices).some((d: any) => !d.simulated);
+
   return (
     <div className="flex gap-2 flex-wrap items-center">
-      {/* Blinking LIVE badge */}
-      <div className="flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5">
-        <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
-        <span className="text-[9px] font-bold text-sky-500 uppercase tracking-wider">Live</span>
-      </div>
+      {/* LIVE or SIM badge */}
+      {anyLive ? (
+        <div className="flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+          <span className="text-[9px] font-bold text-sky-500 uppercase tracking-wider">Live</span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 px-2 py-0.5">
+          <span className="text-[9px] font-medium text-neutral-400 uppercase tracking-wider">Sim</span>
+        </div>
+      )}
 
       {Object.entries(prices).map(([sym, d]: [string, any]) => {
         const up = (d.change ?? 0) >= 0;
@@ -401,7 +410,8 @@ function NewsPanel({ news }: { news: any[] }) {
       </div>
     );
 
-  const liveCount = news.filter((n) => n.is_live).length;
+  const liveCount  = news.filter((n) => n.is_live).length;
+  const aiCount    = news.filter((n) => n.ai_scored).length;
   const sentDot: Record<string, string> = {
     positive: "bg-emerald-400", negative: "bg-red-400", neutral: "bg-neutral-400",
   };
@@ -414,12 +424,22 @@ function NewsPanel({ news }: { news: any[] }) {
       {/* Header row */}
       <div className="flex items-center justify-between px-1 mb-1">
         <span className="text-[10px] text-neutral-400">{news.length} articles</span>
-        {liveCount > 0 && (
-          <div className="flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
-            <span className="text-[9px] font-bold text-sky-500 uppercase tracking-wider">{liveCount} live</span>
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          {aiCount > 0 && (
+            <div className="flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/25 px-2 py-0.5">
+              <svg className="w-2.5 h-2.5 text-violet-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 0 2h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1 0-2h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 10 4a2 2 0 0 1 2-2z"/>
+              </svg>
+              <span className="text-[9px] font-bold text-violet-500 uppercase tracking-wider">AI · {aiCount}</span>
+            </div>
+          )}
+          {liveCount > 0 && (
+            <div className="flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+              <span className="text-[9px] font-bold text-sky-500 uppercase tracking-wider">{liveCount} live</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {news.map((item, i) => (
@@ -449,6 +469,9 @@ function NewsPanel({ news }: { news: any[] }) {
                   </span>
                 ) : (
                   <span className="px-1 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-400 font-medium">SIM</span>
+                )}
+                {item.ai_scored && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-600 dark:text-violet-400 font-semibold">AI</span>
                 )}
                 <span>{item.timestamp}</span>
                 <span className={cn("font-semibold",
@@ -501,6 +524,115 @@ function LogLine({ l }: { l: any }) {
       <span className="text-neutral-300 dark:text-neutral-700 tabular-nums shrink-0 select-none">{t}</span>
       <span className={cn("shrink-0 w-11 font-semibold", c[l.level] ?? "")}>{l.level}</span>
       <span className="text-neutral-600 dark:text-neutral-400 break-all">{l.message}</span>
+    </div>
+  );
+}
+
+// ─── AI Analyst ───────────────────────────────────────────────────────────────
+
+function AIAnalyst({ metrics, positions }: { metrics: any; positions: any[] }) {
+  const [text, setText]           = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [error, setError]         = useState("");
+  const scrollRef                 = useRef<HTMLDivElement>(null);
+  const abortRef                  = useRef<AbortController | null>(null);
+
+  const analyze = async () => {
+    if (loading) {
+      abortRef.current?.abort();
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setText("");
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      const res = await fetch(`${API}/portfolio/analysis`, { signal: ctrl.signal });
+      if (!res.ok) {
+        setError(`Server error ${res.status}`);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) { setError("No response body"); return; }
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        setText((prev) => prev + chunk);
+        // Auto-scroll as text streams in
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      }
+      setLastUpdated(new Date());
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setError("Connection failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800/60">
+        <div className="flex items-center gap-2">
+          <svg className="w-3.5 h-3.5 text-violet-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 0 2h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1 0-2h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 10 4a2 2 0 0 1 2-2z"/>
+          </svg>
+          <span className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-300">AI Portfolio Analyst</span>
+          {loading && (
+            <div className="flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-violet-400 animate-pulse" />
+              <span className="text-[9px] text-violet-500 font-medium">Analyzing…</span>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {lastUpdated && !loading && (
+            <span className="text-[9px] text-neutral-400 tabular-nums">
+              {lastUpdated.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          )}
+          <button
+            onClick={analyze}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide transition-all",
+              loading
+                ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 hover:bg-neutral-200 dark:hover:bg-neutral-700"
+                : "bg-violet-500 text-white hover:bg-violet-600 shadow-sm shadow-violet-500/20"
+            )}>
+            {loading ? "Stop" : text ? "Re-analyze" : "Analyze"}
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div
+        ref={scrollRef}
+        className={cn("overflow-y-auto overscroll-contain scrollbar-thin transition-all", text || loading || error ? "h-52" : "h-20")}
+      >
+        {error && (
+          <div className="px-4 py-3 text-[11px] text-red-500 dark:text-red-400">{error}</div>
+        )}
+        {!text && !loading && !error && (
+          <div className="flex flex-col items-center justify-center h-full gap-2">
+            <svg className="w-5 h-5 text-neutral-300 dark:text-neutral-600" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+              <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 0 2h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1 0-2h1a7 7 0 0 1 7-7h1V5.73A2 2 0 0 1 10 4a2 2 0 0 1 2-2z"/>
+            </svg>
+            <span className="text-[11px] text-neutral-400">Click Analyze for an AI-powered portfolio report</span>
+          </div>
+        )}
+        {(text || loading) && (
+          <div className="px-4 py-3 text-[11px] text-neutral-700 dark:text-neutral-300 leading-relaxed whitespace-pre-wrap font-mono">
+            {text}
+            {loading && <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-violet-400 animate-pulse rounded-sm align-text-bottom" />}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -791,15 +923,25 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="flex flex-col min-h-full">
 
-      {/* ── Top bar: status + live tickers ─────────────────── */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* ── Sticky top bar: status + live tickers ──────────── */}
+      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-white/95 dark:bg-neutral-950/95 backdrop-blur-sm border-b border-neutral-200/60 dark:border-neutral-800/60 shrink-0">
         <div className={cn("h-2 w-2 rounded-full shrink-0", online ? "bg-emerald-400 animate-pulse" : "bg-red-400")} />
         <span className="text-[11px] text-neutral-500 font-medium">{online ? "Connected" : "Offline"}</span>
         {regime && <RegimeBadge regime={regime} />}
-        {Object.keys(liveP).length > 0 && <LiveTicker prices={liveP} />}
+        {Object.keys(liveP).length > 0
+          ? <LiveTicker prices={liveP} />
+          : (
+            <div className="flex items-center gap-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 border border-neutral-200/60 dark:border-neutral-700/60 px-2.5 py-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-neutral-300 dark:bg-neutral-600 animate-pulse" />
+              <span className="text-[9px] font-medium text-neutral-400 uppercase tracking-wider">Fetching prices…</span>
+            </div>
+          )
+        }
       </div>
+
+    <div className="p-4 space-y-4">
 
       {/* ── KPI cards ───────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
@@ -882,6 +1024,9 @@ export default function DashboardPage() {
               <div className="text-[10px] text-neutral-400 mt-1">β {fmtN(m?.beta ?? 1, 2)} · α {fmtPct(m?.alpha ?? 0)}</div>
             </div>
           </div>
+
+          {/* AI Analyst */}
+          <AIAnalyst metrics={m} positions={positions} />
 
           {/* Logs */}
           <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60">
@@ -988,6 +1133,7 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+    </div>
     </div>
   );
 }
