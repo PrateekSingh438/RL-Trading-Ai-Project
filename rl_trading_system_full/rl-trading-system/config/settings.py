@@ -20,7 +20,7 @@ class DataConfig:
         "sma_30", "sma_60", "ema_12", "ema_26",
         "volume_norm", "volatility", "cci", "dmi", "turbulence"
     ])
-    lookback_window: int = 60  # LSTM lookback
+    lookback_window: int = 20  # LSTM lookback (20 is faster than 60 with minimal accuracy loss)
     risk_free_rate: float = 0.04  # Annual risk-free rate
 
 

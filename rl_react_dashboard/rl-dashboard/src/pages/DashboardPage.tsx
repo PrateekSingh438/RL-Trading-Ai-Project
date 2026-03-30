@@ -1,48 +1,75 @@
-import {
-  useState,
-  useMemo,
-  memo,
-  useEffect,
-  useRef,
-} from "react";
-import { useUIStore } from "../store";
-import { useNotificationStore } from "../store";
+/**
+ * DashboardPage v4 — interactive, real-time trading dashboard
+ *
+ * Panels:
+ *  • Live price ticker bar (real quotes from /market/live)
+ *  • 8 KPI cards with trend arrows
+ *  • Drawdown / risk gauge
+ *  • Equity curve sparkline
+ *  • TradingView-style candlestick chart
+ *  • Agent controls with training progress
+ *  • Tabbed side panel: Signals | Positions | Sentiment | News | Importance
+ *  • Live news feed (real headlines from /sentiment/news)
+ *  • System log with level filter
+ */
+import { useState, useMemo, memo, useEffect, useRef } from "react";
+import { useUIStore, useNotificationStore } from "../store";
 import TradingChart from "../components/charts/TradingChart";
 
 const API = "http://localhost:8000/api/v1";
 
-// ─── Metric Card ──────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const fmt$ = (v: number) =>
+  v >= 1_000_000
+    ? `$${(v / 1_000_000).toFixed(2)}M`
+    : v >= 1_000
+    ? `$${(v / 1_000).toFixed(1)}K`
+    : `$${v.toFixed(2)}`;
+
+const fmtPct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+const fmtN   = (v: number, d = 3) => isNaN(v) ? "—" : v.toFixed(d);
+
+function cn(...classes: (string | false | undefined)[]) {
+  return classes.filter(Boolean).join(" ");
+}
+
+// ─── Regime badge ─────────────────────────────────────────────────────────────
+
+const REGIME_CONFIG: Record<string, { label: string; color: string; bg: string; dot: string }> = {
+  bull:           { label: "Bull",     color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/25", dot: "bg-emerald-400" },
+  bear:           { label: "Bear",     color: "text-red-600 dark:text-red-400",         bg: "bg-red-500/10 border-red-500/25",         dot: "bg-red-400"     },
+  sideways:       { label: "Sideways", color: "text-amber-600 dark:text-amber-400",     bg: "bg-amber-500/10 border-amber-500/25",     dot: "bg-amber-400"   },
+  high_volatility:{ label: "High Vol", color: "text-purple-600 dark:text-purple-400",   bg: "bg-purple-500/10 border-purple-500/25",   dot: "bg-purple-400"  },
+};
+
+function RegimeBadge({ regime }: { regime: string | null }) {
+  if (!regime) return null;
+  const cfg = REGIME_CONFIG[regime] ?? REGIME_CONFIG.sideways;
+  return (
+    <div className={cn("flex items-center gap-1.5 rounded-full border px-2.5 py-1", cfg.bg)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse", cfg.dot)} />
+      <span className={cn("text-[10px] font-bold uppercase tracking-wider", cfg.color)}>{cfg.label}</span>
+    </div>
+  );
+}
+
+// ─── KPI Card ────────────────────────────────────────────────────────────────
 
 const MC = memo(function MC({
-  label,
-  value,
-  change,
-  positive,
-  icon,
-  sub,
+  label, value, change, positive, icon, sub,
 }: {
-  label: string;
-  value: string;
-  change?: string;
-  positive?: boolean;
-  icon?: string;
-  sub?: React.ReactNode;
+  label: string; value: string; change?: string; positive?: boolean; icon?: React.ReactNode; sub?: React.ReactNode;
 }) {
   return (
     <div className="group rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 px-4 py-3.5 hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 hover:shadow-sm">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-medium">
-          {label}
-        </span>
-        {icon && <span className="text-xs opacity-30">{icon}</span>}
+        <span className="text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-medium">{label}</span>
+        {icon && <span className="opacity-30 text-neutral-500 dark:text-neutral-400">{icon}</span>}
       </div>
-      <div className="text-[22px] font-semibold text-neutral-900 dark:text-neutral-50 tabular-nums leading-tight">
-        {value}
-      </div>
+      <div className="text-[22px] font-semibold text-neutral-900 dark:text-neutral-50 tabular-nums leading-tight">{value}</div>
       {change && (
-        <div
-          className={`text-[11px] mt-1 tabular-nums font-medium ${positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"}`}
-        >
+        <div className={cn("text-[11px] mt-1 tabular-nums font-medium", positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
           {positive ? "▲" : "▼"} {change}
         </div>
       )}
@@ -51,139 +78,170 @@ const MC = memo(function MC({
   );
 });
 
-// ─── Regime Badge ─────────────────────────────────────────
+// ─── Live price ticker bar ────────────────────────────────────────────────────
 
-const REGIME_CONFIG: Record<
-  string,
-  { label: string; color: string; bg: string; dot: string }
-> = {
-  bull: {
-    label: "Bull",
-    color: "text-emerald-600 dark:text-emerald-400",
-    bg: "bg-emerald-500/10 border-emerald-500/25",
-    dot: "bg-emerald-400",
-  },
-  bear: {
-    label: "Bear",
-    color: "text-red-600 dark:text-red-400",
-    bg: "bg-red-500/10 border-red-500/25",
-    dot: "bg-red-400",
-  },
-  sideways: {
-    label: "Sideways",
-    color: "text-amber-600 dark:text-amber-400",
-    bg: "bg-amber-500/10 border-amber-500/25",
-    dot: "bg-amber-400",
-  },
-  high_volatility: {
-    label: "High Vol",
-    color: "text-purple-600 dark:text-purple-400",
-    bg: "bg-purple-500/10 border-purple-500/25",
-    dot: "bg-purple-400",
-  },
-};
+function LiveTicker({ prices }: { prices: Record<string, any> }) {
+  const [flash, setFlash] = useState<Record<string, boolean>>({});
+  const prevRef = useRef<Record<string, number>>({});
 
-function RegimeBadge({ regime }: { regime: string | null }) {
-  if (!regime) return null;
-  const cfg = REGIME_CONFIG[regime] ?? REGIME_CONFIG.sideways;
+  // Flash a symbol briefly when its price changes
+  useEffect(() => {
+    const changed: Record<string, boolean> = {};
+    for (const [sym, d] of Object.entries(prices)) {
+      if (prevRef.current[sym] !== undefined && prevRef.current[sym] !== d.price) {
+        changed[sym] = true;
+      }
+      prevRef.current[sym] = d.price;
+    }
+    if (Object.keys(changed).length) {
+      setFlash(changed);
+      const t = setTimeout(() => setFlash({}), 600);
+      return () => clearTimeout(t);
+    }
+  }, [prices]);
+
+  if (!Object.keys(prices).length) return null;
+
   return (
-    <div
-      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${cfg.bg}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${cfg.dot}`} />
-      <span className={`text-[10px] font-bold uppercase tracking-wider ${cfg.color}`}>
-        {cfg.label}
-      </span>
-    </div>
-  );
-}
+    <div className="flex gap-2 flex-wrap items-center">
+      {/* Blinking LIVE badge */}
+      <div className="flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+        <span className="text-[9px] font-bold text-sky-500 uppercase tracking-wider">Live</span>
+      </div>
 
-// ─── Price Tick ───────────────────────────────────────────
-
-function PriceTick({
-  symbol,
-  price,
-  prev,
-}: {
-  symbol: string;
-  price: number | null;
-  prev: number | null;
-}) {
-  const change = price && prev && prev > 0 ? ((price - prev) / prev) * 100 : null;
-  const up = change !== null ? change >= 0 : null;
-  return (
-    <div className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60">
-      <span className="text-[10px] font-bold text-neutral-500 dark:text-neutral-400">
-        {symbol}
-      </span>
-      {price !== null ? (
-        <>
-          <span className="text-[11px] font-semibold tabular-nums text-neutral-800 dark:text-neutral-200">
-            ${price.toFixed(2)}
-          </span>
-          {change !== null && (
-            <span
-              className={`text-[10px] font-medium tabular-nums ${
-                up ? "text-emerald-500" : "text-red-500"
-              }`}
-            >
-              {up ? "▲" : "▼"} {Math.abs(change).toFixed(2)}%
+      {Object.entries(prices).map(([sym, d]: [string, any]) => {
+        const up = (d.change ?? 0) >= 0;
+        const isFlashing = flash[sym];
+        return (
+          <div key={sym}
+            className={cn(
+              "flex items-center gap-1.5 rounded-lg px-2.5 py-1 border transition-colors duration-300",
+              isFlashing
+                ? up
+                  ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/40"
+                  : "bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/40"
+                : "bg-white dark:bg-neutral-900/80 border-neutral-200/60 dark:border-neutral-800/60"
+            )}>
+            <span className="text-[10px] font-bold text-neutral-500 dark:text-neutral-400">{sym}</span>
+            <span className="text-[12px] font-semibold tabular-nums text-neutral-800 dark:text-neutral-100">
+              ${(d.price ?? 0).toFixed(2)}
             </span>
-          )}
-        </>
-      ) : (
-        <span className="text-[10px] text-neutral-300 dark:text-neutral-700">—</span>
-      )}
+            <span className={cn("text-[10px] font-medium tabular-nums", up ? "text-emerald-500" : "text-red-500")}>
+              {up ? "▲" : "▼"}{Math.abs(d.change_pct ?? 0).toFixed(2)}%
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// ─── Signal Row ───────────────────────────────────────────
+// ─── Drawdown gauge ───────────────────────────────────────────────────────────
 
-function SR({ s }: { s: any }) {
+function DrawdownGauge({ current, max }: { current: number; max: number }) {
+  const pct = max !== 0 ? Math.min(Math.abs(current) / Math.abs(max), 1) * 100 : 0;
+  const color = pct < 40 ? "bg-emerald-500" : pct < 70 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div className="mt-1.5">
+      <div className="h-1.5 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+        <div className={cn("h-full rounded-full transition-all duration-500", color)} style={{ width: `${pct.toFixed(0)}%` }} />
+      </div>
+      <div className="flex justify-between text-[8px] text-neutral-400 tabular-nums mt-0.5">
+        <span>Current {(Math.abs(current) * 100).toFixed(1)}%</span>
+        <span>Max {(Math.abs(max) * 100).toFixed(1)}%</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Equity sparkline ─────────────────────────────────────────────────────────
+
+function EquityCurve({ data }: { data: { value: number }[] }) {
+  if (data.length < 2) return <div className="text-[11px] text-neutral-400 text-center py-6">Equity curve appears after agent starts</div>;
+  const vals = data.map((d) => d.value);
+  const mn = Math.min(...vals), mx = Math.max(...vals), range = mx - mn || 1;
+  const W = 600, H = 80;
+  const pts = vals.map((v, i) => `${((i / (vals.length - 1)) * W).toFixed(1)},${(H - ((v - mn) / range) * (H - 8) - 4).toFixed(1)}`).join(" ");
+  const color = vals[vals.length - 1] >= vals[0] ? "#22c55e" : "#ef4444";
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 80 }}>
+      <defs>
+        <linearGradient id="eqG" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={`0,${H} ${pts} ${W},${H}`} fill="url(#eqG)" />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ─── Risk meter (semicircle gauge) ────────────────────────────────────────────
+
+function RiskMeter({ sharpe, sortino }: { sharpe: number; sortino: number }) {
+  // Map sharpe [-2, 3] → [0, 100]
+  const score = Math.round(Math.min(100, Math.max(0, ((sharpe + 2) / 5) * 100)));
+  const color = score > 65 ? "#22c55e" : score > 35 ? "#f59e0b" : "#ef4444";
+  const label = score > 65 ? "Healthy" : score > 35 ? "Moderate" : "Risky";
+  const r = 36, cx = 50, cy = 50;
+  const startAngle = Math.PI;
+  const endAngle   = startAngle + (score / 100) * Math.PI;
+  const x1 = cx + r * Math.cos(startAngle), y1 = cy + r * Math.sin(startAngle);
+  const x2 = cx + r * Math.cos(endAngle),   y2 = cy + r * Math.sin(endAngle);
+  const large = score > 50 ? 1 : 0;
+  return (
+    <div className="flex flex-col items-center">
+      <svg viewBox="0 0 100 55" style={{ width: 90, height: 50 }}>
+        <path d={`M ${cx - r},${cy} A ${r},${r} 0 0 1 ${cx + r},${cy}`} fill="none" stroke="#e5e7eb" strokeWidth="8" strokeLinecap="round" className="dark:stroke-neutral-700" />
+        {score > 0 && (
+          <path d={`M ${x1},${y1} A ${r},${r} 0 ${large} 1 ${x2},${y2}`} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round" />
+        )}
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="12" fontWeight="700" fill={color}>{score}</text>
+        <text x={cx} y={cy + 6} textAnchor="middle" fontSize="5.5" fill="#9ca3af">{label}</text>
+      </svg>
+      <div className="flex gap-3 text-[9px] text-neutral-400 tabular-nums">
+        <span>Sharpe {fmtN(sharpe, 2)}</span>
+        <span>Sortino {fmtN(sortino, 2)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Signal row ───────────────────────────────────────────────────────────────
+
+function SignalRow({ s }: { s: any }) {
   const [open, setOpen] = useState(false);
-  const c: Record<string, string> = {
-    BUY: "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/8",
+  const ac: Record<string, string> = {
+    BUY:  "text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/8",
     SELL: "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/8",
     HOLD: "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/8",
   };
-  const dc: Record<string, string> = {
-    BUY: "bg-emerald-500",
-    SELL: "bg-red-500",
-    HOLD: "bg-amber-500",
-  };
+  const dot: Record<string, string> = { BUY: "bg-emerald-500", SELL: "bg-red-500", HOLD: "bg-amber-500" };
   const sentColor: Record<string, string> = {
-    positive: "text-emerald-500",
-    negative: "text-red-500",
-    neutral: "text-neutral-400",
+    positive: "text-emerald-500", negative: "text-red-500", neutral: "text-neutral-400",
   };
-
+  const sent = s.sentiment?.overall ?? "neutral";
   return (
     <div>
       <div
-        className={`flex items-center gap-3 rounded-lg px-3 py-2 cursor-pointer transition-opacity hover:opacity-90 ${c[s.action] || c.HOLD}`}
+        className={cn("flex items-center gap-3 rounded-lg px-3 py-2 cursor-pointer hover:opacity-90", ac[s.action] ?? ac.HOLD)}
         onClick={() => setOpen((v) => !v)}
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${dc[s.action] || dc.HOLD} shrink-0`}
-        />
+        <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", dot[s.action] ?? dot.HOLD)} />
         <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-bold">{s.action}</span>
             <span className="text-[11px] font-semibold opacity-80">{s.symbol}</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] tabular-nums opacity-70">
-            <span>${Number(s.price || 0).toFixed(2)}</span>
-            <span>{Math.round((s.confidence || 0.5) * 100)}%</span>
-            {s.sentiment?.overall && (
-              <span
-                className={`font-semibold ${sentColor[s.sentiment.overall] ?? ""}`}
-              >
-                {s.sentiment.overall === "positive"
-                  ? "↑"
-                  : s.sentiment.overall === "negative"
-                    ? "↓"
-                    : "~"}
+            <span>${Number(s.price ?? 0).toFixed(2)}</span>
+            <span>{Math.round((s.confidence ?? 0.5) * 100)}%</span>
+            {sent && (
+              <span className={cn("font-semibold", sentColor[sent])}>
+                {sent === "positive" ? "↑" : sent === "negative" ? "↓" : "~"}
+                {s.sentiment?.live && <span className="ml-0.5 text-[8px] text-sky-400">L</span>}
               </span>
             )}
           </div>
@@ -192,15 +250,9 @@ function SR({ s }: { s: any }) {
       </div>
       {open && s.reasoning && (
         <div className="mx-1 mb-1 px-3 py-2 rounded-b-lg bg-neutral-50 dark:bg-neutral-800/60 border-x border-b border-neutral-200/60 dark:border-neutral-700/40">
-          <p className="text-[10px] text-neutral-500 dark:text-neutral-400 leading-relaxed">
-            {s.reasoning}
-          </p>
+          <p className="text-[10px] text-neutral-500 dark:text-neutral-400 leading-relaxed">{s.reasoning}</p>
           {s.regime && (
-            <span
-              className={`inline-block mt-1 text-[9px] font-semibold uppercase tracking-wider ${
-                REGIME_CONFIG[s.regime]?.color ?? "text-neutral-400"
-              }`}
-            >
+            <span className={cn("inline-block mt-1 text-[9px] font-semibold uppercase tracking-wider", REGIME_CONFIG[s.regime]?.color ?? "text-neutral-400")}>
               {s.regime.replace("_", " ")} regime
             </span>
           )}
@@ -210,130 +262,122 @@ function SR({ s }: { s: any }) {
   );
 }
 
-// ─── Sentiment Summary ────────────────────────────────────
+// ─── Positions panel ─────────────────────────────────────────────────────────
+
+function PositionsPanel({ positions }: { positions: any[] }) {
+  if (!positions.length)
+    return <div className="text-[11px] text-neutral-400 text-center py-6">No open positions</div>;
+  const totalMV = positions.reduce((s, p) => s + Math.abs(p.market_value), 0);
+  return (
+    <div className="space-y-2">
+      {positions.map((p) => (
+        <div key={p.symbol} className="rounded-lg bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2.5">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] font-bold text-neutral-800 dark:text-neutral-200">{p.symbol}</span>
+              <span className={cn("text-[9px] font-semibold px-1.5 py-0.5 rounded", p.shares >= 0 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400" : "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400")}>
+                {p.shares >= 0 ? "LONG" : "SHORT"}
+              </span>
+            </div>
+            <span className="text-[12px] font-semibold tabular-nums">{fmt$(p.market_value)}</span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-neutral-400 tabular-nums">
+            <span>{Math.abs(p.shares).toFixed(2)} sh</span>
+            <span>@</span>
+            <span>${p.current_price.toFixed(2)}</span>
+            <span className="text-neutral-300 dark:text-neutral-700">·</span>
+            <span>{p.weight.toFixed(1)}% wt</span>
+          </div>
+          <div className="mt-1.5 h-1 rounded-full bg-neutral-200 dark:bg-neutral-700 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-sky-500 transition-all"
+              style={{ width: `${Math.min((Math.abs(p.market_value) / Math.max(totalMV, 1)) * 100, 100).toFixed(0)}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Sentiment panel ─────────────────────────────────────────────────────────
 
 function SentimentPanel({ signals }: { signals: any[] }) {
   const stats = useMemo(() => {
-    const recent = signals.slice(-30);
-    if (recent.length === 0) return null;
+    const recent = signals.slice(-50);
+    if (!recent.length) return null;
     const counts = { positive: 0, negative: 0, neutral: 0 };
     let totalConf = 0;
     for (const s of recent) {
       const o = s.sentiment?.overall ?? "neutral";
-      counts[o as keyof typeof counts] = (counts[o as keyof typeof counts] || 0) + 1;
+      counts[o as keyof typeof counts]++;
       totalConf += s.sentiment?.confidence ?? 0;
     }
-    const dom = (Object.entries(counts) as [string, number][]).sort(
-      (a, b) => b[1] - a[1]
-    )[0][0];
-    return {
-      counts,
-      total: recent.length,
-      avgConf: totalConf / recent.length,
-      dominant: dom,
-    };
+    const dom = (Object.entries(counts) as [string, number][]).sort((a, b) => b[1] - a[1])[0][0];
+    return { counts, total: recent.length, avgConf: totalConf / recent.length, dominant: dom };
   }, [signals]);
 
   const bySymbol = useMemo(() => {
-    const map: Record<string, { pos: number; neg: number; neu: number; count: number }> =
-      {};
-    for (const s of signals.slice(-50)) {
+    const map: Record<string, { pos: number; neg: number; neu: number; count: number }> = {};
+    for (const s of signals.slice(-80)) {
       const sym = s.symbol;
-      const o = s.sentiment?.overall ?? "neutral";
+      const o   = s.sentiment?.overall ?? "neutral";
       if (!map[sym]) map[sym] = { pos: 0, neg: 0, neu: 0, count: 0 };
       if (o === "positive") map[sym].pos++;
       else if (o === "negative") map[sym].neg++;
       else map[sym].neu++;
       map[sym].count++;
     }
-    return Object.entries(map).slice(0, 5);
+    return Object.entries(map).slice(0, 6);
   }, [signals]);
 
-  if (!stats) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-2">
-        <span className="text-2xl opacity-20">📰</span>
-        <span className="text-[11px] text-neutral-400">
-          Sentiment data appears after agent starts
-        </span>
-      </div>
-    );
-  }
+  if (!stats)
+    return <div className="flex flex-col items-center justify-center h-full gap-2">
+      <span className="text-2xl opacity-20">📊</span>
+      <span className="text-[11px] text-neutral-400">Sentiment data appears after agent starts</span>
+    </div>;
 
   const domColors: Record<string, string> = {
     positive: "text-emerald-600 dark:text-emerald-400",
     negative: "text-red-600 dark:text-red-400",
-    neutral: "text-neutral-500 dark:text-neutral-400",
+    neutral:  "text-neutral-500 dark:text-neutral-400",
   };
-  const barColors: Record<string, string> = {
-    positive: "bg-emerald-500",
-    negative: "bg-red-500",
-    neutral: "bg-neutral-400",
-  };
+  const barC: Record<string, string> = { positive: "bg-emerald-500", negative: "bg-red-500", neutral: "bg-neutral-400" };
 
   return (
     <div className="space-y-4">
-      {/* Overall */}
       <div className="rounded-lg bg-neutral-50 dark:bg-neutral-800/50 px-3 py-3">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">
-            Overall (last 30 signals)
-          </span>
-          <span className="text-[10px] text-neutral-400 tabular-nums">
-            {(stats.avgConf * 100).toFixed(0)}% avg conf
-          </span>
+          <span className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">Overall (last 50 signals)</span>
+          <span className="text-[10px] text-neutral-400 tabular-nums">{(stats.avgConf * 100).toFixed(0)}% avg conf</span>
         </div>
-        <div
-          className={`text-[15px] font-bold capitalize mb-2 ${domColors[stats.dominant]}`}
-        >
-          {stats.dominant}
-        </div>
+        <div className={cn("text-[15px] font-bold capitalize mb-2", domColors[stats.dominant])}>{stats.dominant}</div>
         <div className="flex gap-1 h-2 rounded-full overflow-hidden">
           {(["positive", "negative", "neutral"] as const).map((k) => {
             const pct = (stats.counts[k] / stats.total) * 100;
-            return pct > 0 ? (
-              <div
-                key={k}
-                className={`h-full ${barColors[k]}`}
-                style={{ width: `${pct.toFixed(1)}%` }}
-              />
-            ) : null;
+            return pct > 0 ? <div key={k} className={cn("h-full", barC[k])} style={{ width: `${pct.toFixed(1)}%` }} /> : null;
           })}
         </div>
         <div className="flex justify-between mt-1 text-[9px] text-neutral-400 tabular-nums">
-          <span>+{stats.counts.positive}</span>
-          <span>~{stats.counts.neutral}</span>
-          <span>-{stats.counts.negative}</span>
+          <span>+{stats.counts.positive}</span><span>~{stats.counts.neutral}</span><span>-{stats.counts.negative}</span>
         </div>
       </div>
-
-      {/* By symbol */}
       {bySymbol.length > 0 && (
         <div className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">
-            By Symbol
-          </div>
+          <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium">By Symbol</div>
           {bySymbol.map(([sym, d]) => {
-            const total = d.count || 1;
-            const posPct = (d.pos / total) * 100;
-            const negPct = (d.neg / total) * 100;
+            const t2 = d.count || 1;
+            const posPct = (d.pos / t2) * 100;
+            const negPct = (d.neg / t2) * 100;
             return (
               <div key={sym}>
                 <div className="flex items-center justify-between mb-0.5">
-                  <span className="text-[11px] font-semibold text-neutral-700 dark:text-neutral-300">
-                    {sym}
-                  </span>
+                  <span className="text-[11px] font-semibold text-neutral-700 dark:text-neutral-300">{sym}</span>
                   <span className="text-[9px] text-neutral-400">{d.count} signals</span>
                 </div>
                 <div className="flex gap-0.5 h-1.5 rounded-full overflow-hidden bg-neutral-100 dark:bg-neutral-800">
-                  <div
-                    className="h-full bg-emerald-500"
-                    style={{ width: `${posPct.toFixed(1)}%` }}
-                  />
-                  <div
-                    className="h-full bg-red-500"
-                    style={{ width: `${negPct.toFixed(1)}%` }}
-                  />
+                  <div className="h-full bg-emerald-500" style={{ width: `${posPct.toFixed(1)}%` }} />
+                  <div className="h-full bg-red-500"     style={{ width: `${negPct.toFixed(1)}%` }} />
                 </div>
               </div>
             );
@@ -344,145 +388,157 @@ function SentimentPanel({ signals }: { signals: any[] }) {
   );
 }
 
-// ─── Equity Sparkline ─────────────────────────────────────
+// ─── Live news panel ──────────────────────────────────────────────────────────
 
-function EquityCurve({ data }: { data: { value: number }[] }) {
-  if (data.length < 2)
+function NewsPanel({ news }: { news: any[] }) {
+  if (!news.length)
     return (
-      <div className="text-[11px] text-neutral-400 text-center py-6">
-        Equity curve appears after agent starts
+      <div className="flex flex-col items-center justify-center gap-2 py-8">
+        <div className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+          <span className="text-[11px] text-neutral-400">Fetching live news…</span>
+        </div>
       </div>
     );
-  const vals = data.map((d) => d.value);
-  const mn = Math.min(...vals),
-    mx = Math.max(...vals),
-    range = mx - mn || 1;
-  const w = 600,
-    h = 80;
-  const pts = vals
-    .map(
-      (v, i) =>
-        `${((i / (vals.length - 1)) * w).toFixed(1)},${(h - ((v - mn) / range) * (h - 8) - 4).toFixed(1)}`,
-    )
-    .join(" ");
-  const color = vals[vals.length - 1] >= vals[0] ? "#22c55e" : "#ef4444";
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: 80 }}>
-      <defs>
-        <linearGradient id="eqG" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.15" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={`0,${h} ${pts} ${w},${h}`} fill="url(#eqG)" />
-      <polyline
-        points={pts}
-        fill="none"
-        stroke={color}
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
-// ─── Feature Importance ───────────────────────────────────
+  const liveCount = news.filter((n) => n.is_live).length;
+  const sentDot: Record<string, string> = {
+    positive: "bg-emerald-400", negative: "bg-red-400", neutral: "bg-neutral-400",
+  };
+  const sentBg: Record<string, string> = {
+    positive: "border-l-emerald-400", negative: "border-l-red-400", neutral: "border-l-neutral-300 dark:border-l-neutral-700",
+  };
 
-function FeatureImportance({ data }: { data: Record<string, number> }) {
-  const entries = Object.entries(data).slice(0, 8);
-  if (entries.length === 0)
-    return (
-      <div className="text-[11px] text-neutral-400 text-center py-4">
-        Feature importance computed after 30 steps
-      </div>
-    );
-  const mx = Math.max(...entries.map((e) => e[1]));
   return (
-    <div className="space-y-1.5">
-      {entries.map(([k, v]) => (
-        <div key={k} className="flex items-center gap-2">
-          <span className="text-[10px] text-neutral-500 w-10 text-right tabular-nums font-mono truncate">
-            {k}
-          </span>
-          <div className="flex-1 h-3 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-emerald-500 transition-all duration-500"
-              style={{ width: `${((v / mx) * 100).toFixed(0)}%` }}
-            />
+    <div className="space-y-2">
+      {/* Header row */}
+      <div className="flex items-center justify-between px-1 mb-1">
+        <span className="text-[10px] text-neutral-400">{news.length} articles</span>
+        {liveCount > 0 && (
+          <div className="flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/25 px-2 py-0.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+            <span className="text-[9px] font-bold text-sky-500 uppercase tracking-wider">{liveCount} live</span>
           </div>
-          <span className="text-[9px] text-neutral-400 tabular-nums w-8">
-            {(v * 100).toFixed(1)}%
-          </span>
+        )}
+      </div>
+
+      {news.map((item, i) => (
+        <div key={i}
+          className={cn(
+            "rounded-lg bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2.5 border-l-2",
+            sentBg[item.sentiment] ?? sentBg.neutral
+          )}>
+          <div className="flex items-start gap-2">
+            <span className={cn("h-1.5 w-1.5 rounded-full mt-1.5 shrink-0", sentDot[item.sentiment] ?? sentDot.neutral)} />
+            <div className="flex-1 min-w-0">
+              {item.url ? (
+                <a href={item.url} target="_blank" rel="noreferrer"
+                   className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200 leading-snug hover:text-sky-600 dark:hover:text-sky-400 line-clamp-2">
+                  {item.title}
+                </a>
+              ) : (
+                <p className="text-[11px] font-medium text-neutral-800 dark:text-neutral-200 leading-snug line-clamp-2">{item.title}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-[9px] text-neutral-400">
+                <span className="font-bold text-neutral-600 dark:text-neutral-300">{item.ticker}</span>
+                <span>{item.source}</span>
+                {item.is_live ? (
+                  <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-600 dark:text-sky-400 font-semibold">
+                    <span className="h-1 w-1 rounded-full bg-sky-400 animate-pulse" />
+                    LIVE
+                  </span>
+                ) : (
+                  <span className="px-1 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-400 font-medium">SIM</span>
+                )}
+                <span>{item.timestamp}</span>
+                <span className={cn("font-semibold",
+                  item.impact_score > 0 ? "text-emerald-500" : item.impact_score < 0 ? "text-red-500" : "text-neutral-400")}>
+                  {item.impact_score > 0 ? "+" : ""}{(item.impact_score * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-// ─── Log Line ─────────────────────────────────────────────
+// ─── Feature importance ───────────────────────────────────────────────────────
 
-function LL({ l }: { l: any }) {
-  const c: Record<string, string> = {
-    INFO: "text-sky-600 dark:text-sky-400",
-    WARN: "text-amber-600 dark:text-amber-400",
-    ERROR: "text-red-600 dark:text-red-400",
-    DEBUG: "text-neutral-400",
-  };
-  const t = new Date(l.timestamp).toLocaleTimeString("en-US", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+function FeatureImportance({ data }: { data: Record<string, number> }) {
+  const entries = Object.entries(data).slice(0, 10);
+  if (!entries.length)
+    return <div className="text-[11px] text-neutral-400 text-center py-4">Feature importance computed after 30 steps</div>;
+  const mx = Math.max(...entries.map((e) => e[1]));
   return (
-    <div className="flex gap-2 text-[11px] font-mono leading-6 px-3 hover:bg-neutral-100/50 dark:hover:bg-white/[0.02]">
-      <span className="text-neutral-300 dark:text-neutral-700 tabular-nums shrink-0 select-none">
-        {t}
-      </span>
-      <span className={`shrink-0 w-11 font-semibold ${c[l.level] || ""}`}>
-        {l.level}
-      </span>
-      <span className="text-neutral-600 dark:text-neutral-400 break-all">
-        {l.message}
-      </span>
+    <div className="space-y-1.5">
+      {entries.map(([k, v]) => (
+        <div key={k} className="flex items-center gap-2">
+          <span className="text-[10px] text-neutral-500 w-12 text-right tabular-nums font-mono truncate">{k}</span>
+          <div className="flex-1 h-3 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+            <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${((v / mx) * 100).toFixed(0)}%` }} />
+          </div>
+          <span className="text-[9px] text-neutral-400 tabular-nums w-8">{(v * 100).toFixed(1)}%</span>
+        </div>
+      ))}
     </div>
   );
 }
 
-// ─── Agent Controls ───────────────────────────────────────
+// ─── Log line ─────────────────────────────────────────────────────────────────
 
-const EPISODE_QUICK = [50, 100, 250, 500, 1000];
+function LogLine({ l }: { l: any }) {
+  const c: Record<string, string> = {
+    INFO:  "text-sky-600 dark:text-sky-400",
+    WARN:  "text-amber-600 dark:text-amber-400",
+    ERROR: "text-red-600 dark:text-red-400",
+    DEBUG: "text-neutral-400",
+  };
+  const t = new Date(l.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return (
+    <div className="flex gap-2 text-[11px] font-mono leading-6 px-3 hover:bg-neutral-100/50 dark:hover:bg-white/[0.02]">
+      <span className="text-neutral-300 dark:text-neutral-700 tabular-nums shrink-0 select-none">{t}</span>
+      <span className={cn("shrink-0 w-11 font-semibold", c[l.level] ?? "")}>{l.level}</span>
+      <span className="text-neutral-600 dark:text-neutral-400 break-all">{l.message}</span>
+    </div>
+  );
+}
+
+// ─── Agent controls ───────────────────────────────────────────────────────────
+
+const EP_QUICK = [10, 25, 50, 100, 200];
 
 function AgentCtrl() {
-  const [mode, setMode] = useState<"paper" | "live">("paper");
-  const [running, setRunning] = useState(false);
-  const [model, setModel] = useState("ensemble");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [tStatus, setTStatus] = useState("");
+  const [mode, setMode]         = useState<"paper" | "live">("paper");
+  const [running, setRunning]   = useState(false);
+  const [model, setModel]       = useState("ensemble");
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState("");
+  const [tStatus, setTStatus]   = useState("");
   const [tProgress, setTProgress] = useState(0);
-  const [nEpisodes, setNEpisodes] = useState(500);
-  const [showTrainCfg, setShowTrainCfg] = useState(false);
+  const [nEp, setNEp]           = useState(50);
+  const [showCfg, setShowCfg]   = useState(false);
 
   useEffect(() => {
     const poll = async () => {
       try {
         const r = await fetch(`${API}/agents/status`);
         const d = await r.json();
-        if (d.data?.[0]) {
-          const a = d.data[0];
+        const a = d.data?.[0];
+        if (a) {
           setRunning(a.status === "running");
-          setModel(a.model || "ensemble");
-          setMode(a.mode || "paper");
-          setTStatus(a.training_status || "");
-          setTProgress(a.training_progress || 0);
-          if (a.n_episodes) setNEpisodes(a.n_episodes);
+          setModel(a.model ?? "ensemble");
+          setMode(a.mode ?? "paper");
+          setTStatus(a.training_status ?? "");
+          setTProgress(a.training_progress ?? 0);
+          if (a.n_episodes) setNEp(a.n_episodes);
         }
       } catch {}
     };
     poll();
-    const i = setInterval(poll, 2000);
-    return () => clearInterval(i);
+    const id = setInterval(poll, 2000);
+    return () => clearInterval(id);
   }, []);
 
   const toggle = async () => {
@@ -492,17 +548,12 @@ function AgentCtrl() {
       const r = await fetch(`${API}/agents/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: running ? "stop" : "start",
-          model,
-          mode,
-          n_episodes: nEpisodes,
-        }),
+        body: JSON.stringify({ action: running ? "stop" : "start", model, mode, n_episodes: nEp }),
       });
       if (r.ok) setRunning(!running);
       else {
         const d = await r.json();
-        setError(d.detail || "Failed");
+        setError(d.detail ?? "Failed");
       }
     } catch {
       setError("Backend offline");
@@ -511,54 +562,40 @@ function AgentCtrl() {
     }
   };
 
-  const fmtEp = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+  const fmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
 
   return (
     <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-4">
-      {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[13px] font-semibold text-neutral-800 dark:text-neutral-200">
-          Agent
-        </h3>
+        <h3 className="text-[13px] font-semibold text-neutral-800 dark:text-neutral-200">Agent</h3>
         <div className="flex items-center gap-1.5">
-          <span
-            className={`h-2 w-2 rounded-full ${running ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)] animate-pulse" : "bg-neutral-300 dark:bg-neutral-600"}`}
-          />
+          <span className={cn("h-2 w-2 rounded-full", running ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)] animate-pulse" : "bg-neutral-300 dark:bg-neutral-600")} />
           <span className="text-[10px] text-neutral-500 font-medium">
-            {tStatus === "training"
-              ? `Training ${tProgress}%`
-              : running
-                ? "Running"
-                : "Stopped"}
+            {tStatus === "training" ? `Training ${tProgress}%` : running ? "Running" : "Stopped"}
           </span>
         </div>
       </div>
 
       {error && (
-        <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 px-3 py-2 text-[11px] text-red-600 dark:text-red-400 mb-3">
-          {error}
-        </div>
+        <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 px-3 py-2 text-[11px] text-red-600 dark:text-red-400 mb-3">{error}</div>
       )}
 
-      {/* Mode */}
+      {/* Paper / Live */}
       <div className="flex rounded-lg bg-neutral-100 dark:bg-neutral-800/80 p-0.5 mb-3">
         {(["paper", "live"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-all ${mode === m ? (m === "live" ? "bg-red-500 text-white shadow-sm" : "bg-white dark:bg-neutral-700 text-neutral-800 dark:text-neutral-100 shadow-sm") : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"}`}
-          >
+          <button key={m} onClick={() => setMode(m)}
+            className={cn("flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-all",
+              mode === m
+                ? m === "live" ? "bg-red-500 text-white shadow-sm" : "bg-white dark:bg-neutral-700 text-neutral-800 dark:text-neutral-100 shadow-sm"
+                : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300")}>
             {m === "paper" ? "Paper" : "⚠ Live"}
           </button>
         ))}
       </div>
 
       {/* Model */}
-      <select
-        value={model}
-        onChange={(e) => setModel(e.target.value)}
-        className="w-full rounded-lg bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-3 py-2 text-[11px] text-neutral-700 dark:text-neutral-300 mb-3 outline-none focus:border-emerald-500 font-medium"
-      >
+      <select value={model} onChange={(e) => setModel(e.target.value)}
+        className="w-full rounded-lg bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-3 py-2 text-[11px] text-neutral-700 dark:text-neutral-300 mb-3 outline-none focus:border-emerald-500 font-medium">
         <option value="ensemble">Ensemble (PPO + SAC)</option>
         <option value="ppo">PPO only</option>
         <option value="sac">SAC only</option>
@@ -566,97 +603,58 @@ function AgentCtrl() {
         <option value="sac_lstm">SAC + LSTM</option>
       </select>
 
-      {/* Episodes config toggle */}
-      <button
-        onClick={() => setShowTrainCfg((v) => !v)}
-        className="w-full flex items-center justify-between rounded-lg bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 px-3 py-2 mb-3 transition-colors hover:border-neutral-300 dark:hover:border-neutral-600"
-      >
+      {/* Episodes */}
+      <button onClick={() => setShowCfg((v) => !v)}
+        className="w-full flex items-center justify-between rounded-lg bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200/60 dark:border-neutral-700/40 px-3 py-2 mb-3 hover:border-neutral-300 dark:hover:border-neutral-600 transition-colors">
         <div className="flex items-center gap-2">
           <span className="text-[10px]">🏋</span>
-          <span className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
-            Training episodes
-          </span>
+          <span className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">Episodes</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-            {fmtEp(nEpisodes)}
-          </span>
-          <span className="text-[9px] text-neutral-400">{showTrainCfg ? "▲" : "▼"}</span>
+          <span className="text-[12px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{fmt(nEp)}</span>
+          <span className="text-[9px] text-neutral-400">{showCfg ? "▲" : "▼"}</span>
         </div>
       </button>
 
-      {/* Episodes expanded panel */}
-      {showTrainCfg && (
+      {showCfg && (
         <div className="rounded-lg border border-neutral-200/60 dark:border-neutral-700/40 bg-neutral-50/50 dark:bg-neutral-800/30 p-3 mb-3">
-          <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-2">
-            Quick select
-          </div>
           <div className="flex flex-wrap gap-1 mb-3">
-            {EPISODE_QUICK.map((n) => (
-              <button
-                key={n}
-                onClick={() => setNEpisodes(n)}
-                className={`rounded-md px-2 py-1 text-[10px] font-bold border transition-all ${
-                  nEpisodes === n
+            {EP_QUICK.map((n) => (
+              <button key={n} onClick={() => setNEp(n)}
+                className={cn("rounded-md px-2.5 py-1 text-[10px] font-bold border transition-all",
+                  nEp === n
                     ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                    : "border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:border-neutral-400"
-                }`}
-              >
-                {fmtEp(n)}
+                    : "border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:border-neutral-400")}>
+                {fmt(n)}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={50}
-              max={2000}
-              step={50}
-              value={nEpisodes}
-              onChange={(e) => setNEpisodes(Number(e.target.value))}
-              className="flex-1 h-1.5 rounded-full appearance-none bg-neutral-200 dark:bg-neutral-700 accent-emerald-500 cursor-pointer"
-            />
-            <input
-              type="number"
-              min={1}
-              max={10000}
-              value={nEpisodes}
-              onChange={(e) =>
-                setNEpisodes(Math.max(1, Number(e.target.value)))
-              }
-              className="w-16 rounded-md bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-2 py-1 text-[11px] text-center font-bold text-neutral-700 dark:text-neutral-300 outline-none focus:border-emerald-500"
-            />
+            <input type="range" min={5} max={500} step={5} value={nEp} onChange={(e) => setNEp(Number(e.target.value))}
+              className="flex-1 h-1.5 rounded-full appearance-none bg-neutral-200 dark:bg-neutral-700 accent-emerald-500 cursor-pointer" />
+            <input type="number" min={1} max={2000} value={nEp} onChange={(e) => setNEp(Math.max(1, Number(e.target.value)))}
+              className="w-16 rounded-md bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-2 py-1 text-[11px] text-center font-bold outline-none focus:border-emerald-500" />
           </div>
+          <p className="text-[9px] text-neutral-400 mt-2">Tip: 10–50 episodes trains in ~1–3 min on CPU.</p>
         </div>
       )}
 
-      {/* Start/Stop button */}
-      <button
-        onClick={toggle}
-        disabled={loading || tStatus === "training"}
-        className={`w-full rounded-lg py-2.5 text-[11px] font-bold tracking-wide uppercase transition-all disabled:opacity-40 ${running ? "bg-red-500 text-white hover:bg-red-600 shadow-sm shadow-red-500/20" : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm shadow-emerald-500/20"}`}
-      >
-        {loading
-          ? "•••"
-          : tStatus === "training"
-            ? `Training ${tProgress}%`
-            : running
-              ? "Stop Agent"
-              : `Start · ${fmtEp(nEpisodes)} episodes`}
+      {/* Start / Stop */}
+      <button onClick={toggle} disabled={loading || tStatus === "training"}
+        className={cn("w-full rounded-lg py-2.5 text-[11px] font-bold tracking-wide uppercase transition-all disabled:opacity-40",
+          running
+            ? "bg-red-500 text-white hover:bg-red-600 shadow-sm shadow-red-500/20"
+            : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm shadow-emerald-500/20")}>
+        {loading ? "•••" : tStatus === "training" ? `Training ${tProgress}%` : running ? "Stop Agent" : `Start · ${fmt(nEp)} ep`}
       </button>
 
-      {/* Training progress bar */}
       {tStatus === "training" && (
         <div className="mt-2">
           <div className="h-1.5 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300"
-              style={{ width: `${tProgress}%` }}
-            />
+            <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300" style={{ width: `${tProgress}%` }} />
           </div>
           <div className="flex justify-between text-[9px] text-neutral-400 tabular-nums mt-0.5">
-            <span>Training…</span>
-            <span>{tProgress}%</span>
+            <span>Training…</span><span>{tProgress}%</span>
           </div>
         </div>
       )}
@@ -664,105 +662,87 @@ function AgentCtrl() {
   );
 }
 
-// ─── Drawdown Indicator ───────────────────────────────────
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-function DrawdownBar({
-  current,
-  max,
-}: {
-  current: number;
-  max: number;
-}) {
-  const pct = max !== 0 ? Math.min(Math.abs(current) / Math.abs(max), 1) * 100 : 0;
-  const color =
-    pct < 40 ? "bg-emerald-500" : pct < 70 ? "bg-amber-500" : "bg-red-500";
-  return (
-    <div className="mt-1.5">
-      <div className="h-1 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${color}`}
-          style={{ width: `${pct.toFixed(0)}%` }}
-        />
-      </div>
-      <div className="flex justify-between text-[8px] text-neutral-400 tabular-nums mt-0.5">
-        <span>Current: {(Math.abs(current) * 100).toFixed(1)}%</span>
-        <span>Max: {(Math.abs(max) * 100).toFixed(1)}%</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main Dashboard ───────────────────────────────────────
+type SideTab = "signals" | "positions" | "sentiment" | "news" | "importance";
 
 export default function DashboardPage() {
-  const logFilter = useUIStore((s) => s.logFilter);
+  const logFilter    = useUIStore((s) => s.logFilter);
   const setLogFilter = useUIStore((s) => s.setLogFilter);
-  const chartSymbol = useUIStore((s) => s.chartSymbol);
-  const setChartSymbol = useUIStore((s) => s.setChartSymbol);
-  const push = useNotificationStore((s) => s.push);
+  const chartSymbol  = useUIStore((s) => s.chartSymbol);
+  const setChart     = useUIStore((s) => s.setChartSymbol);
+  const push         = useNotificationStore((s) => s.push);
 
-  const [m, setM] = useState<any>(null);
-  const [sigs, setSigs] = useState<any[]>([]);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [online, setOnline] = useState(false);
-  const [equity, setEquity] = useState<any[]>([]);
+  const [m,         setM]         = useState<any>(null);
+  const [sigs,      setSigs]      = useState<any[]>([]);
+  const [logs,      setLogs]      = useState<any[]>([]);
+  const [online,    setOnline]    = useState(false);
+  const [equity,    setEquity]    = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
-  const [featImp, setFeatImp] = useState<Record<string, number>>({});
-  const [regime, setRegime] = useState<string | null>(null);
-  const [tab, setTab] = useState<
-    "signals" | "positions" | "sentiment" | "importance"
-  >("signals");
-  const logEnd = useRef<HTMLDivElement>(null);
-  const prevSigsLen = useRef(0);
-  const prevRegime = useRef<string | null>(null);
+  const [featImp,   setFeatImp]   = useState<Record<string, number>>({});
+  const [regime,    setRegime]    = useState<string | null>(null);
+  const [liveP,     setLiveP]     = useState<Record<string, any>>({});
+  const [news,      setNews]      = useState<any[]>([]);
+  const [tab,       setTab]       = useState<SideTab>("signals");
+  const [symbols,   setSymbols]   = useState<string[]>([]);
 
-  // Derive latest price per symbol from signals
-  const priceTicks = useMemo(() => {
-    const latest: Record<string, { price: number; prev: number | null }> = {};
-    for (const s of sigs) {
-      const sym = s.symbol;
-      if (!sym) continue;
-      if (!latest[sym]) {
-        latest[sym] = { price: s.price, prev: null };
-      } else {
-        latest[sym] = { price: s.price, prev: latest[sym].price };
-      }
+  const [logsOpen,   setLogsOpen]   = useState(true);
+  const logScrollRef = useRef<HTMLDivElement>(null);
+  const logEnd       = useRef<HTMLDivElement>(null);
+  const logAtBottom  = useRef(true);   // tracks whether user is scrolled to bottom
+  const prevSigsLen  = useRef(0);
+  const prevRegime   = useRef<string | null>(null);
+
+  // Only auto-scroll when user is already at (or near) the bottom
+  useEffect(() => {
+    if (logsOpen && logAtBottom.current) {
+      logEnd.current?.scrollIntoView({ behavior: "smooth" });
     }
-    return latest;
-  }, [sigs]);
+  }, [logs, logsOpen]);
 
+  const onLogScroll = () => {
+    const el = logScrollRef.current;
+    if (!el) return;
+    logAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
+
+  // Main polling
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [mr, tr, lr, er, pr, fr] = await Promise.all([
+        const [mr, tr, lr, er, pr, fr, sr, lpr, nr] = await Promise.all([
           fetch(`${API}/portfolio/metrics`),
           fetch(`${API}/portfolio/trades`),
-          fetch(`${API}/logs?limit=100`),
+          fetch(`${API}/logs?limit=150`),
           fetch(`${API}/portfolio/equity`),
           fetch(`${API}/portfolio/positions`),
           fetch(`${API}/portfolio/feature_importance`),
+          fetch(`${API}/market/symbols`),
+          fetch(`${API}/market/live`),
+          fetch(`${API}/sentiment/news?limit=20`),
         ]);
         if (!alive) return;
         setM((await mr.json()).data);
-        const newSigs = (await tr.json()).data || [];
+        const newSigs = (await tr.json()).data ?? [];
         setSigs(newSigs);
-        setLogs(((await lr.json()).data || []).reverse());
-        setEquity((await er.json()).data || []);
-        setPositions((await pr.json()).data || []);
-        setFeatImp((await fr.json()).data || {});
+        setLogs(((await lr.json()).data ?? []).reverse());
+        setEquity((await er.json()).data ?? []);
+        setPositions((await pr.json()).data ?? []);
+        setFeatImp((await fr.json()).data ?? {});
+        setSymbols((await sr.json()).data ?? []);
+        setLiveP((await lpr.json()).data ?? {});
+        setNews((await nr.json()).data ?? []);
         setOnline(true);
 
-        // Notify on new trade signals
         if (newSigs.length > prevSigsLen.current && prevSigsLen.current > 0) {
           const newest = newSigs[newSigs.length - 1];
-          if (newest) {
+          if (newest)
             push({
               type: newest.action === "BUY" ? "success" : newest.action === "SELL" ? "error" : "info",
               title: `${newest.action} ${newest.symbol ?? ""}`,
-              message: `$${Number(newest.price ?? 0).toFixed(2)} · ${Math.round((newest.confidence ?? 0) * 100)}% confidence`,
+              message: `$${Number(newest.price ?? 0).toFixed(2)} · ${Math.round((newest.confidence ?? 0) * 100)}% conf`,
             });
-          }
         }
         prevSigsLen.current = newSigs.length;
       } catch {
@@ -771,337 +751,241 @@ export default function DashboardPage() {
       }
     };
     poll();
-    const i = setInterval(poll, 1500);
-    return () => {
-      alive = false;
-      clearInterval(i);
-    };
+    const id = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(id); };
   }, [push]);
 
-  // Poll regime separately (slower)
+  // Regime polling (slower)
   useEffect(() => {
     let alive = true;
     const pollRegime = async () => {
       try {
         const r = await fetch(`${API}/market/regime`);
         const d = await r.json();
-        const newRegime = d.data?.current ?? d.data ?? null;
+        const nr = d.data?.current ?? d.data ?? null;
         if (!alive) return;
-        if (newRegime && newRegime !== prevRegime.current) {
-          if (prevRegime.current !== null) {
-            push({
-              type: "warning",
-              title: "Regime Change",
-              message: `${(prevRegime.current ?? "").replace("_", " ")} → ${String(newRegime).replace("_", " ")}`,
-            });
-          }
-          prevRegime.current = newRegime;
-          setRegime(newRegime);
+        if (nr && nr !== prevRegime.current) {
+          if (prevRegime.current !== null)
+            push({ type: "warning", title: "Regime Change", message: `${String(prevRegime.current).replace("_", " ")} → ${String(nr).replace("_", " ")}` });
+          prevRegime.current = nr;
+          setRegime(nr);
         }
       } catch {}
     };
     pollRegime();
-    const i = setInterval(pollRegime, 30_000);
-    return () => {
-      alive = false;
-      clearInterval(i);
-    };
+    const id = setInterval(pollRegime, 5000);
+    return () => { alive = false; clearInterval(id); };
   }, [push]);
 
-  useEffect(() => {
-    logEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs.length]);
-
-  const v = (k1: string, k2: string, fb: any = 0) =>
-    m ? (m[k1] ?? m[k2] ?? fb) : fb;
-  const fM = (n: number) =>
-    (n < 0 ? "-$" : "$") +
-    Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
-  const fP = (n: number) => (n * 100).toFixed(2) + "%";
-  const fLogs = useMemo(
-    () =>
-      logFilter === "ALL"
-        ? logs
-        : logs.filter((l: any) => l.level === logFilter),
+  const filteredLogs = useMemo(
+    () => (logFilter === "ALL" ? logs : logs.filter((l) => l.level === logFilter)),
     [logs, logFilter],
   );
 
-  const SYM = ["AAPL", "GOOGL", "MSFT", "NFLX", "TSLA"];
+  const SIDE_TABS: { id: SideTab; label: string; count?: number }[] = [
+    { id: "signals",    label: "Signals",    count: sigs.length },
+    { id: "positions",  label: "Positions",  count: positions.length },
+    { id: "sentiment",  label: "Sentiment" },
+    { id: "news",       label: "News",       count: news.length },
+    { id: "importance", label: "Features" },
+  ];
 
   return (
-    <div className="flex flex-col gap-3 p-3 sm:p-4 h-full overflow-y-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <div
-            className={`h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]" : "bg-red-400 animate-pulse"}`}
-          />
-          <span className="text-[12px] text-neutral-500 font-medium">
-            {online ? "Connected" : "Offline"}
-          </span>
-          {regime && <RegimeBadge regime={regime} />}
-        </div>
-        <div className="flex gap-1 flex-wrap">
-          {SYM.map((s) => (
-            <button
-              key={s}
-              onClick={() => setChartSymbol(s)}
-              className={`rounded-md px-2.5 py-1 text-[10px] font-bold tracking-wide transition-all ${chartSymbol === s ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm" : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+    <div className="p-4 space-y-4">
+
+      {/* ── Top bar: status + live tickers ─────────────────── */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className={cn("h-2 w-2 rounded-full shrink-0", online ? "bg-emerald-400 animate-pulse" : "bg-red-400")} />
+        <span className="text-[11px] text-neutral-500 font-medium">{online ? "Connected" : "Offline"}</span>
+        {regime && <RegimeBadge regime={regime} />}
+        {Object.keys(liveP).length > 0 && <LiveTicker prices={liveP} />}
       </div>
 
-      {/* Price ticks */}
-      {Object.keys(priceTicks).length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {SYM.filter((s) => priceTicks[s]).map((s) => (
-            <PriceTick
-              key={s}
-              symbol={s}
-              price={priceTicks[s]?.price ?? null}
-              prev={priceTicks[s]?.prev ?? null}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Metrics — row 1: core */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <MC
-          icon="💰"
-          label="Portfolio"
-          value={m ? fM(v("portfolio_value", "portfolioValue", 1e6)) : "$1,000,000"}
-          change={m ? fP(v("pnl_pct", "pnlPct")) : undefined}
-          positive={m ? v("pnl_pct", "pnlPct") >= 0 : true}
-        />
-        <MC
-          icon="📊"
-          label="Daily P&L"
-          value={m ? fM(v("pnl_daily", "pnlDaily")) : "$0"}
-          positive={m ? v("pnl_daily", "pnlDaily") >= 0 : true}
-        />
-        <MC
-          icon="⚡"
-          label="Sharpe"
-          value={m ? Number(v("sharpe_ratio", "sharpeRatio")).toFixed(3) : "—"}
-        />
-        <MC
-          icon="🛡"
-          label="Sortino"
-          value={m ? Number(v("sortino_ratio", "sortinoRatio")).toFixed(3) : "—"}
-        />
-        <MC
-          icon="📉"
-          label="Max DD"
-          value={m ? fP(v("max_drawdown", "maxDrawdown")) : "—"}
-          sub={
-            m ? (
-              <DrawdownBar
-                current={v("current_drawdown", "currentDrawdown")}
-                max={v("max_drawdown", "maxDrawdown")}
-              />
-            ) : undefined
-          }
-        />
-        <MC
-          icon="🎯"
-          label="Win Rate"
-          value={m ? fP(v("win_rate", "winRate")) : "—"}
-          change={m ? `${v("total_trades", "totalTrades")} trades` : undefined}
-          positive
-        />
+      {/* ── KPI cards ───────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
+        <MC label="Portfolio"  value={fmt$(m?.portfolio_value  ?? 1_000_000)}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>}
+          change={m ? fmtPct(m.pnl_pct) : undefined} positive={(m?.pnl_pct ?? 0) >= 0}
+          sub={<EquityCurve data={equity.slice(-80)} />} />
+        <MC label="Sharpe"    value={fmtN(m?.sharpe_ratio ?? 0)}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
+          change={m?.sortino_ratio != null ? `Sortino ${fmtN(m.sortino_ratio)}` : undefined}
+          positive={(m?.sharpe_ratio ?? 0) >= 1} />
+        <MC label="Drawdown"  value={fmtPct(-(m?.max_drawdown ?? 0))}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>}
+          positive={false}
+          sub={<DrawdownGauge current={m?.current_drawdown ?? 0} max={m?.max_drawdown ?? 0} />} />
+        <MC label="Win Rate"  value={`${((m?.win_rate ?? 0) * 100).toFixed(0)}%`}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>}
+          positive={(m?.win_rate ?? 0) >= 0.5} />
+        <MC label="Alpha"     value={fmtPct(m?.alpha ?? 0)}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M12 2 2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}
+          positive={(m?.alpha ?? 0) >= 0} />
+        <MC label="Beta"      value={fmtN(m?.beta ?? 1, 2)}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M6 3v18"/><path d="M6 3h8a4 4 0 0 1 0 8H6"/><path d="M6 11h9a4 4 0 0 1 0 8H6"/></svg>}
+          positive={Math.abs((m?.beta ?? 1) - 1) < 0.2} />
+        <MC label="Cash"      value={fmt$(m?.cash ?? 1_000_000)}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>} />
+        <MC label="Trades"    value={String(m?.total_trades ?? 0)}
+          icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="m3 7 5 5-5 5"/><path d="m21 17-5-5 5-5"/><line x1="9" y1="12" x2="15" y2="12"/></svg>} />
       </div>
 
-      {/* Metrics — row 2: risk/alpha */}
-      {m && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-          <MC
-            icon="α"
-            label="Alpha"
-            value={fP(v("alpha", "alpha"))}
-            positive={v("alpha", "alpha") >= 0}
-          />
-          <MC
-            icon="β"
-            label="Beta"
-            value={Number(v("beta", "beta")).toFixed(3)}
-          />
-          <MC
-            icon="σ"
-            label="Volatility"
-            value={fP(v("volatility", "volatility"))}
-          />
-          <MC
-            icon="💵"
-            label="Cash"
-            value={fM(v("cash", "cash"))}
-          />
-          <MC
-            icon="📈"
-            label="Cum P&L"
-            value={fM(v("pnl_cumulative", "pnlCumulative"))}
-            positive={v("pnl_cumulative", "pnlCumulative") >= 0}
-          />
-          <MC
-            icon="🔢"
-            label="Cur DD"
-            value={fP(Math.abs(v("current_drawdown", "currentDrawdown")))}
-          />
-        </div>
-      )}
+      {/* ── Main grid ───────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-      {/* Equity Curve */}
-      <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
-            Equity curve
-          </span>
-          {equity.length > 0 && (
-            <span className="text-[10px] text-neutral-400 tabular-nums">
-              {equity.length} steps
-            </span>
-          )}
-        </div>
-        <EquityCurve data={equity} />
-      </div>
+        {/* Left 2/3 : chart + logs */}
+        <div className="lg:col-span-2 space-y-4">
 
-      {/* Chart + Right Panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <div className="lg:col-span-2">
-          <TradingChart symbol={chartSymbol} signals={sigs} height={400} />
-        </div>
-        <div className="flex flex-col gap-3">
-          <AgentCtrl />
-          {/* Tabbed panel */}
-          <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 flex-1 overflow-hidden flex flex-col min-h-[180px]">
-            <div className="flex border-b border-neutral-200/60 dark:border-neutral-800/60 overflow-x-auto">
-              {(
-                ["signals", "positions", "sentiment", "importance"] as const
-              ).map((t) => (
+          {/* Chart */}
+          <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800/60">
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-300">Price Chart</span>
+                {liveP[chartSymbol] && (
+                  <span className="text-[10px] text-sky-500 font-bold">
+                    ${liveP[chartSymbol].price?.toFixed(2)} {liveP[chartSymbol].change_pct >= 0 ? "▲" : "▼"}{Math.abs(liveP[chartSymbol].change_pct ?? 0).toFixed(2)}%
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-1">
+                {symbols.map((s) => (
+                  <button key={s} onClick={() => setChart(s)}
+                    className={cn("rounded-md px-2 py-1 text-[10px] font-bold transition-all",
+                      chartSymbol === s
+                        ? "bg-emerald-500 text-white"
+                        : "bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 hover:text-neutral-700")}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <TradingChart symbol={chartSymbol} signals={sigs} />
+          </div>
+
+          {/* Risk summary row */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3 flex flex-col items-center justify-center">
+              <RiskMeter sharpe={m?.sharpe_ratio ?? 0} sortino={m?.sortino_ratio ?? 0} />
+            </div>
+            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium mb-2">Daily P&L</div>
+              <div className={cn("text-[20px] font-bold tabular-nums", (m?.pnl_daily ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>
+                {(m?.pnl_daily ?? 0) >= 0 ? "+" : ""}{fmt$(m?.pnl_daily ?? 0)}
+              </div>
+              <div className="text-[10px] text-neutral-400 mt-1">
+                Cumulative: {(m?.pnl_cumulative ?? 0) >= 0 ? "+" : ""}{fmt$(m?.pnl_cumulative ?? 0)}
+              </div>
+            </div>
+            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3">
+              <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium mb-2">Volatility</div>
+              <div className="text-[20px] font-bold tabular-nums">{fmtPct(m?.volatility ?? 0)}</div>
+              <div className="text-[10px] text-neutral-400 mt-1">β {fmtN(m?.beta ?? 1, 2)} · α {fmtPct(m?.alpha ?? 0)}</div>
+            </div>
+          </div>
+
+          {/* Logs */}
+          <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800/60">
+              <div className="flex items-center gap-2">
+                {/* Terminal icon */}
+                <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+                </svg>
+                <span className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-300">System Logs</span>
+                <span className="text-[9px] text-neutral-400 tabular-nums">({filteredLogs.length})</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {(["ALL", "INFO", "WARN", "ERROR"] as const).map((lv) => (
+                  <button key={lv} onClick={() => setLogFilter(lv)}
+                    className={cn("rounded-md px-2 py-0.5 text-[9px] font-bold uppercase transition-all",
+                      logFilter === lv
+                        ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+                        : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300")}>
+                    {lv}
+                  </button>
+                ))}
+                {/* Divider */}
+                <div className="w-px h-3.5 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
+                {/* Scroll-to-bottom button — only when not at bottom */}
+                {!logAtBottom.current && logsOpen && (
+                  <button
+                    onClick={() => { logAtBottom.current = true; logEnd.current?.scrollIntoView({ behavior: "smooth" }); }}
+                    title="Scroll to latest"
+                    className="rounded-md p-1 text-neutral-400 hover:text-emerald-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </button>
+                )}
+                {/* Hide / show toggle */}
                 <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`flex-1 py-2 text-[10px] font-semibold capitalize whitespace-nowrap px-1 transition-colors ${tab === t ? "text-neutral-800 dark:text-neutral-200 border-b-2 border-emerald-500" : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"}`}
-                >
-                  {t}
-                  {t === "signals" && sigs.length > 0 && (
-                    <span className="ml-1 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1 text-[8px]">
-                      {sigs.length}
-                    </span>
+                  onClick={() => setLogsOpen((v) => !v)}
+                  title={logsOpen ? "Collapse logs" : "Expand logs"}
+                  className="rounded-md p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all">
+                  {logsOpen ? (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <polyline points="18 15 12 9 6 15"/>
+                    </svg>
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+            {logsOpen && (
+              <div
+                ref={logScrollRef}
+                onScroll={onLogScroll}
+                className="h-52 overflow-y-auto overscroll-contain scrollbar-thin py-1 font-mono">
+                {filteredLogs.length === 0
+                  ? <div className="text-[11px] text-neutral-400 text-center py-6">No logs yet</div>
+                  : filteredLogs.map((l) => <LogLine key={l.id} l={l} />)}
+                <div ref={logEnd} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right 1/3 : agent + side panel */}
+        <div className="space-y-4">
+          <AgentCtrl />
+
+          {/* Side tabs */}
+          <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 flex flex-col" style={{ minHeight: 400 }}>
+            {/* Tab bar — horizontal scroll on small screens, no visible scrollbar */}
+            <div className="flex border-b border-neutral-100 dark:border-neutral-800/60 overflow-x-auto scrollbar-none shrink-0">
+              {SIDE_TABS.map(({ id, label, count }) => (
+                <button key={id} onClick={() => setTab(id)}
+                  className={cn(
+                    "flex-1 min-w-max px-2 py-2.5 text-[10px] font-semibold whitespace-nowrap transition-all border-b-2",
+                    tab === id
+                      ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
+                      : "border-transparent text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+                  )}>
+                  {label}
+                  {count != null && count > 0 && (
+                    <span className="ml-1 text-[8px] bg-neutral-100 dark:bg-neutral-800 rounded-full px-1.5 py-0.5 tabular-nums">{count}</span>
                   )}
                 </button>
               ))}
             </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {tab === "signals" &&
-                (sigs.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full gap-2">
-                    <span className="text-2xl opacity-20">📡</span>
-                    <span className="text-[11px] text-neutral-400">
-                      Start the agent
-                    </span>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {sigs
-                      .slice(-20)
-                      .reverse()
-                      .map((s: any, i: number) => (
-                        <SR key={s.id || i} s={s} />
-                      ))}
-                  </div>
-                ))}
-              {tab === "positions" &&
-                (positions.length === 0 ? (
-                  <div className="text-[11px] text-neutral-400 text-center py-6">
-                    No open positions
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {positions.map((p: any, i: number) => {
-                      const pnl = p.unrealized_pnl ?? p.unrealizedPnl ?? 0;
-                      const isPos = pnl >= 0;
-                      return (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between rounded-lg bg-neutral-50 dark:bg-neutral-800/50 px-3 py-2"
-                        >
-                          <div>
-                            <div className="text-[12px] font-semibold text-neutral-800 dark:text-neutral-200">
-                              {p.symbol}
-                            </div>
-                            <div className="text-[10px] text-neutral-400">
-                              {p.shares} shares · avg ${Number(p.avg_entry_price ?? p.avgEntryPrice ?? 0).toFixed(2)}
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <div className="text-[12px] tabular-nums text-neutral-700 dark:text-neutral-300">
-                              ${Number(p.current_price ?? p.currentPrice ?? 0).toFixed(2)}
-                            </div>
-                            <div
-                              className={`text-[10px] tabular-nums font-medium ${isPos ? "text-emerald-500" : "text-red-500"}`}
-                            >
-                              {isPos ? "+" : ""}
-                              {pnl >= 0
-                                ? `$${pnl.toFixed(2)}`
-                                : `-$${Math.abs(pnl).toFixed(2)}`}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              {tab === "sentiment" && (
-                <SentimentPanel signals={sigs} />
+            {/* Scrollable content — grows to fill available space */}
+            <div className="flex-1 overflow-y-auto overscroll-contain scrollbar-thin p-3" style={{ maxHeight: 520 }}>
+              {tab === "signals"    && (
+                <div className="space-y-1.5">
+                  {sigs.length === 0
+                    ? <div className="text-[11px] text-neutral-400 text-center py-6">No signals yet</div>
+                    : [...sigs].reverse().slice(0, 60).map((s) => <SignalRow key={s.id} s={s} />)}
+                </div>
               )}
+              {tab === "positions"  && <PositionsPanel positions={positions} />}
+              {tab === "sentiment"  && <SentimentPanel signals={sigs} />}
+              {tab === "news"       && <NewsPanel news={news} />}
               {tab === "importance" && <FeatureImportance data={featImp} />}
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Logs */}
-      <div className="rounded-xl bg-neutral-50 dark:bg-[#0c0c0c] border border-neutral-200/60 dark:border-neutral-800/60 min-h-[150px] max-h-[220px] flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-2 border-b border-neutral-200/60 dark:border-neutral-800/60 bg-neutral-100/50 dark:bg-neutral-900/50">
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1">
-              <span className="h-2.5 w-2.5 rounded-full bg-red-400/60" />
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-400/60" />
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/60" />
-            </div>
-            <span className="text-[10px] font-mono text-neutral-400 ml-1">
-              logs ({logs.length})
-            </span>
-          </div>
-          <div className="flex gap-0.5">
-            {(["ALL", "INFO", "WARN", "ERROR"] as const).map((l) => (
-              <button
-                key={l}
-                onClick={() => setLogFilter(l)}
-                className={`rounded-md px-2 py-0.5 text-[9px] font-bold tracking-wide ${logFilter === l ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300" : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"}`}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto py-1">
-          {fLogs.length === 0 ? (
-            <div className="text-[11px] text-neutral-300 dark:text-neutral-700 text-center py-6 font-mono">
-              ░░░ waiting ░░░
-            </div>
-          ) : (
-            <>
-              {fLogs.slice(0, 80).map((l: any, i: number) => (
-                <LL key={l.id || i} l={l} />
-              ))}
-              <div ref={logEnd} />
-            </>
-          )}
         </div>
       </div>
     </div>

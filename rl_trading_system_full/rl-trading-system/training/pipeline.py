@@ -212,13 +212,13 @@ class TrainingPipeline:
                 # Agent selects action
                 action, decision_info = self.agent.select_action(obs)
 
-                # Optional: sentiment validation (every 20 steps)
-                if step_count % 20 == 0:
+                # Sentiment validation is SLOW — run only every 100 steps
+                # to keep the training hot-path fast.
+                if step_count % 100 == 0 and step_count > 0:
                     regime_name = "Sideways"
                     if hasattr(self.train_env, 'regime_detector'):
                         regime_name = self.train_env.regime_detector.get_regime_name()
-
-                    news = news_gen.generate_news(tickers[:1], n_items=2, market_regime=regime_name)
+                    news = news_gen.generate_news(tickers[:1], n_items=1, market_regime=regime_name)
                     for i, ticker in enumerate(tickers[:min(len(tickers), len(action))]):
                         report = sentiment_analyzer.analyze(news, ticker)
                         action[i], _ = decision_validator.validate(action[i], report, ticker)

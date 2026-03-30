@@ -4,11 +4,38 @@ import { ThemeToggle } from "../components/ui/ThemeProvider";
 import { ToastContainer } from "../components/ui/Toast";
 import { useState } from "react";
 
+// ─── Nav icon helpers ──────────────────────────────────────────────────────────
+const IC = {
+  dashboard: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+      <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+      <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+    </svg>
+  ),
+  analytics: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+      <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/>
+    </svg>
+  ),
+  history: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+      <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+    </svg>
+  ),
+  settings: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  ),
+};
+
 const NAV = [
-  { path: "/dashboard", label: "Dashboard", icon: "◎", activeIcon: "◉" },
-  { path: "/analytics", label: "Analytics", icon: "◫", activeIcon: "◧" },
-  { path: "/history", label: "Trade History", icon: "◱", activeIcon: "◲" },
-  { path: "/settings", label: "Settings", icon: "⚙", activeIcon: "⚙" },
+  { path: "/dashboard", label: "Dashboard",    icon: IC.dashboard },
+  { path: "/analytics", label: "Analytics",    icon: IC.analytics  },
+  { path: "/history",   label: "Trade History", icon: IC.history   },
+  { path: "/settings",  label: "Settings",     icon: IC.settings   },
 ];
 
 export default function DashboardLayout() {
@@ -33,9 +60,17 @@ export default function DashboardLayout() {
         )}
         <button
           onClick={toggleSidebar}
-          className="rounded-md p-1.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all text-[10px]"
+          className="rounded-md p-1.5 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all"
         >
-          {sidebarOpen ? "◂" : "▸"}
+          {sidebarOpen ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="w-3.5 h-3.5">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="w-3.5 h-3.5">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          )}
         </button>
       </div>
 
@@ -56,8 +91,8 @@ export default function DashboardLayout() {
                   : "text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800/60"
               }`}
             >
-              <span className="text-sm w-5 text-center shrink-0">
-                {active ? item.activeIcon : item.icon}
+              <span className="w-5 flex items-center justify-center shrink-0">
+                {item.icon}
               </span>
               {sidebarOpen && <span className="truncate">{item.label}</span>}
             </Link>
@@ -75,10 +110,16 @@ export default function DashboardLayout() {
               const s = useUIStore.getState();
               s.setTheme(s.theme === "dark" ? "light" : "dark");
             }}
-            className="w-full rounded-md py-1.5 text-sm text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all"
+            className="w-full rounded-md py-1.5 flex items-center justify-center text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all"
             title="Toggle theme"
           >
-            ◐
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
           </button>
         )}
       </div>
@@ -110,10 +151,13 @@ export default function DashboardLayout() {
         ) : (
           <button
             onClick={logout}
-            className="w-full rounded-md py-1.5 text-sm text-neutral-400 hover:text-red-500 transition-all"
+            className="w-full rounded-md py-1.5 flex items-center justify-center text-neutral-400 hover:text-red-500 transition-all"
             title="Logout"
           >
-            ×
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
           </button>
         )}
       </div>
@@ -154,9 +198,11 @@ export default function DashboardLayout() {
         <div className="lg:hidden flex items-center justify-between h-12 px-4 border-b border-neutral-200/60 dark:border-neutral-800/60 bg-white dark:bg-neutral-950">
           <button
             onClick={() => setMobileOpen(true)}
-            className="text-neutral-500 text-lg"
+            className="text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 transition-colors"
           >
-            ☰
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-5 h-5">
+              <line x1="3" y1="6"  x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
           </button>
           <div className="flex items-center gap-2">
             <div className="h-5 w-5 rounded bg-emerald-500 flex items-center justify-center">
@@ -167,7 +213,7 @@ export default function DashboardLayout() {
           <div className="w-6" />
         </div>
 
-        <main className="flex-1 overflow-hidden">
+        <main className="flex-1 overflow-y-auto min-h-0">
           <Outlet />
         </main>
       </div>

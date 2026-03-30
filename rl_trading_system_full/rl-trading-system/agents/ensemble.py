@@ -107,6 +107,7 @@ class EnsembleAgent:
             "ppo_weight": float(w_ppo),
             "sac_weight": float(w_sac),
             "ppo_value": float(ppo_value),
+            "ppo_log_prob": float(ppo_log_prob),
             "agreement": float(1.0 - np.mean(np.abs(ppo_action - sac_action)))
         }
 
