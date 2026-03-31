@@ -760,17 +760,17 @@ async def portfolio_analysis():
     Stream an AI-generated analysis of the current portfolio using Gemini Flash.
     Requires GEMINI_API_KEY environment variable.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         async def _no_key():
-            yield "⚠ GEMINI_API_KEY is not set. Get a free key at aistudio.google.com and add it to your environment."
+            yield "⚠ GROQ_API_KEY is not set. Get a free key at console.groq.com and add it to your .env file."
         return StreamingResponse(_no_key(), media_type="text/plain")
 
     try:
-        import google.generativeai as _genai
+        from groq import Groq as _Groq
     except ImportError:
         async def _no_pkg():
-            yield "⚠ google-generativeai package not installed. Run: pip install google-generativeai"
+            yield "⚠ groq package not installed. Run: pip install groq"
         return StreamingResponse(_no_pkg(), media_type="text/plain")
 
     m = portfolio_metrics
@@ -863,22 +863,27 @@ Provide a concise portfolio health report with these sections:
 
 Be direct, data-driven, and practical. No fluff."""
 
-    _genai.configure(api_key=api_key)
-    model = _genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=(
-            "You are a concise, data-driven quantitative analyst. "
-            "Use markdown formatting. Be direct and actionable. "
-            "Never repeat the input data back — only provide insight."
-        ),
-    )
+    client = _Groq(api_key=api_key)
 
     async def stream_analysis():
         try:
-            response = model.generate_content(prompt, stream=True)
-            for chunk in response:
-                if chunk.text:
-                    yield chunk.text
+            stream = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": (
+                        "You are a concise, data-driven quantitative analyst. "
+                        "Use markdown formatting. Be direct and actionable. "
+                        "Never repeat the input data back — only provide insight."
+                    )},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=600,
+                stream=True,
+            )
+            for chunk in stream:
+                text = chunk.choices[0].delta.content
+                if text:
+                    yield text
         except Exception as e:
             yield f"\n\n⚠ Analysis error: {e}"
 

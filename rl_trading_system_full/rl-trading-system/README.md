@@ -126,7 +126,7 @@ npm run dev
 | **Regime Detection** | HMM + rule-based: bull / bear / sideways / high-volatility |
 | **AI Sentiment** | FinBERT (`ProsusAI/finbert`) — real probability scores, falls back to keyword scoring |
 | **Live Prices** | yfinance per-ticker fast_info, simulated seed while market is closed |
-| **AI Portfolio Analyst** | Gemini 2.0 Flash (free tier) — streaming natural language portfolio report |
+| **AI Portfolio Analyst** | Groq (free tier, Llama 3.1) — streaming natural language portfolio report |
 | **Dashboard** | React + Vite + Tailwind — live KPIs, candlestick chart, signals, news, logs |
 
 ## API Endpoints
@@ -173,7 +173,7 @@ CONFIG.trading.transaction_cost        = 0.001 # 0.1%
 ## Environment Variables (.env)
 
 ```
-GEMINI_API_KEY=AIza...   # Free key from aistudio.google.com
+GROQ_API_KEY=gsk_...   # Free key from console.groq.com
 ```
 
 ## License

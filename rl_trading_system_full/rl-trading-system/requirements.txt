@@ -15,9 +15,9 @@ transformers>=4.40.0
 # PyTorch GPU (CUDA 12.1):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121
 
-# ─── AI Portfolio Analyst — Gemini (free tier) ────────────────────────────────
-# Free key at: aistudio.google.com — add to .env as GEMINI_API_KEY=AIza...
-google-generativeai>=0.7.0
+# ─── AI Portfolio Analyst — Groq (free tier) ─────────────────────────────────
+# Free key at: console.groq.com — add to .env as GROQ_API_KEY=gsk_...
+groq>=0.9.0
 
 # ─── Optional: visualization ──────────────────────────────────────────────────
 matplotlib>=3.7.0

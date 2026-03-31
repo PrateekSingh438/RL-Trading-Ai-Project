@@ -46,12 +46,12 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 Without PyTorch the system still runs — it falls back to keyword-based sentiment scoring.
 
-### Step 5: Add your Gemini API key
+### Step 5: Add your Groq API key
 
-Get a **free** key at [aistudio.google.com](https://aistudio.google.com), then edit `.env`:
+Get a **free** key at [console.groq.com](https://console.groq.com), then edit `.env`:
 
 ```
-GEMINI_API_KEY=AIza...
+GROQ_API_KEY=gsk_...
 ```
 
 This enables the AI Portfolio Analyst feature in the dashboard. The rest of the system works without it.
@@ -129,8 +129,8 @@ CONFIG.trading.transaction_cost        = 0.001 # 0.1% per trade
 
 | Problem | Fix |
 |---|---|
-| `GEMINI_API_KEY is not set` | Add key to `.env` and restart server |
-| `google-generativeai not installed` | `pip install google-generativeai` |
+| `GROQ_API_KEY is not set` | Add key to `.env` and restart server |
+| `groq not installed` | `pip install groq` |
 | `python-dotenv not installed` | `pip install python-dotenv` |
 | Live prices show "SIM" | Market is closed — simulated prices are used automatically |
 | FinBERT not loading | Install PyTorch (Step 4 above); keyword fallback is used otherwise |

@@ -627,8 +627,33 @@ function AIAnalyst({ metrics, positions }: { metrics: any; positions: any[] }) {
           </div>
         )}
         {(text || loading) && (
-          <div className="px-4 py-3 text-[11px] text-neutral-700 dark:text-neutral-300 leading-relaxed whitespace-pre-wrap font-mono">
-            {text}
+          <div className="px-4 py-3 space-y-2 text-[11px] text-neutral-700 dark:text-neutral-300 leading-relaxed">
+            {text.split("\n").map((line, i) => {
+              if (/^###\s/.test(line))
+                return <div key={i} className="text-[12px] font-bold text-neutral-800 dark:text-neutral-100 mt-3">{line.replace(/^###\s/, "")}</div>;
+              if (/^##\s/.test(line))
+                return <div key={i} className="text-[13px] font-bold text-violet-600 dark:text-violet-400 mt-4 border-b border-neutral-100 dark:border-neutral-800 pb-1">{line.replace(/^##\s/, "")}</div>;
+              if (/^#\s/.test(line))
+                return <div key={i} className="text-[14px] font-bold text-neutral-900 dark:text-neutral-50 mt-4">{line.replace(/^#\s/, "")}</div>;
+              if (/^\*\s|^-\s/.test(line)) {
+                const content = line.replace(/^\*\s|^-\s/, "").replace(/\*\*(.+?)\*\*/g, "§§$1§§");
+                return (
+                  <div key={i} className="flex gap-2">
+                    <span className="text-violet-400 shrink-0 mt-0.5">•</span>
+                    <span>{content.split("§§").map((part, j) =>
+                      j % 2 === 1 ? <strong key={j} className="font-semibold text-neutral-800 dark:text-neutral-100">{part}</strong> : part
+                    )}</span>
+                  </div>
+                );
+              }
+              if (line.trim() === "") return <div key={i} className="h-1" />;
+              const inlined = line.replace(/\*\*(.+?)\*\*/g, "§§$1§§");
+              return (
+                <div key={i}>{inlined.split("§§").map((part, j) =>
+                  j % 2 === 1 ? <strong key={j} className="font-semibold text-neutral-800 dark:text-neutral-100">{part}</strong> : part
+                )}</div>
+              );
+            })}
             {loading && <span className="inline-block w-1.5 h-3.5 ml-0.5 bg-violet-400 animate-pulse rounded-sm align-text-bottom" />}
           </div>
         )}
