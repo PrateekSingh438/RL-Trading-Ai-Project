@@ -57,23 +57,33 @@ function RegimeBadge({ regime }: { regime: string | null }) {
 // ─── KPI Card ────────────────────────────────────────────────────────────────
 
 const MC = memo(function MC({
-  label, value, change, positive, icon, sub,
+  label, value, change, positive, icon, sub, accent,
 }: {
-  label: string; value: string; change?: string; positive?: boolean; icon?: React.ReactNode; sub?: React.ReactNode;
+  label: string; value: string; change?: string; positive?: boolean; icon?: React.ReactNode; sub?: React.ReactNode; accent?: "green" | "red" | "amber" | "blue" | "purple";
 }) {
+  const accentBar: Record<string, string> = {
+    green:  "bg-emerald-500",
+    red:    "bg-red-500",
+    amber:  "bg-amber-500",
+    blue:   "bg-sky-500",
+    purple: "bg-violet-500",
+  };
+  const bar = accent ? accentBar[accent] : (positive === false ? accentBar.red : accentBar.green);
   return (
-    <div className="group rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 px-4 py-3.5 hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 hover:shadow-sm">
+    <div className="group relative rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 px-4 py-3.5 hover:border-neutral-300 dark:hover:border-neutral-700 transition-all duration-200 hover:shadow-md overflow-hidden">
+      <div className={cn("absolute top-0 left-0 right-0 h-0.5", bar)} />
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-medium">{label}</span>
-        {icon && <span className="opacity-30 text-neutral-500 dark:text-neutral-400">{icon}</span>}
+        <span className="text-[10px] uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-semibold">{label}</span>
+        {icon && <span className="opacity-25 group-hover:opacity-50 text-neutral-500 dark:text-neutral-400 transition-opacity">{icon}</span>}
       </div>
-      <div className="text-[22px] font-semibold text-neutral-900 dark:text-neutral-50 tabular-nums leading-tight">{value}</div>
+      <div className="text-[22px] font-bold text-neutral-900 dark:text-neutral-50 tabular-nums leading-tight">{value}</div>
       {change && (
-        <div className={cn("text-[11px] mt-1 tabular-nums font-medium", positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-          {positive ? "▲" : "▼"} {change}
+        <div className={cn("flex items-center gap-1 text-[11px] mt-1 tabular-nums font-semibold", positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+          <span className="text-[9px]">{positive ? "▲" : "▼"}</span>
+          {change}
         </div>
       )}
-      {sub && <div className="mt-1">{sub}</div>}
+      {sub && <div className="mt-1.5">{sub}</div>}
     </div>
   );
 });
@@ -798,11 +808,20 @@ function AgentCtrl() {
 
       {/* Start / Stop */}
       <button onClick={toggle} disabled={loading || tStatus === "training"}
-        className={cn("w-full rounded-lg py-2.5 text-[11px] font-bold tracking-wide uppercase transition-all disabled:opacity-40",
+        className={cn(
+          "w-full rounded-lg py-2.5 text-[11px] font-bold tracking-wide uppercase transition-all active:scale-[0.98]",
+          "disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100",
           running
-            ? "bg-red-500 text-white hover:bg-red-600 shadow-sm shadow-red-500/20"
-            : "bg-emerald-500 text-white hover:bg-emerald-600 shadow-sm shadow-emerald-500/20")}>
-        {loading ? "•••" : tStatus === "training" ? `Training ${tProgress}%` : running ? "Stop Agent" : `Start · ${fmt(nEp)} ep`}
+            ? "bg-red-500 text-white hover:bg-red-600 shadow-sm shadow-red-500/25 hover:shadow-red-500/40"
+            : "bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600 shadow-sm shadow-emerald-500/25 hover:shadow-emerald-500/40"
+        )}>
+        {loading
+          ? <span className="flex items-center justify-center gap-2"><span className="h-3 w-3 rounded-full border-2 border-white/30 border-t-white animate-spin" />Processing…</span>
+          : tStatus === "training"
+          ? `Training ${tProgress}%`
+          : running
+          ? "■ Stop Agent"
+          : `▶ Start · ${fmt(nEp)} ep`}
       </button>
 
       {tStatus === "training" && (
@@ -951,7 +970,7 @@ export default function DashboardPage() {
     <div className="flex flex-col min-h-full">
 
       {/* ── Sticky top bar: status + live tickers ──────────── */}
-      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-white/95 dark:bg-neutral-950/95 backdrop-blur-sm border-b border-neutral-200/60 dark:border-neutral-800/60 shrink-0">
+      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-white/98 dark:bg-neutral-950/98 backdrop-blur-md border-b border-neutral-200/80 dark:border-neutral-800/80 shrink-0 shadow-sm shadow-neutral-200/50 dark:shadow-neutral-900/50">
         <div className={cn("h-2 w-2 rounded-full shrink-0", online ? "bg-emerald-400 animate-pulse" : "bg-red-400")} />
         <span className="text-[11px] text-neutral-500 font-medium">{online ? "Connected" : "Offline"}</span>
         {regime && <RegimeBadge regime={regime} />}
@@ -966,34 +985,42 @@ export default function DashboardPage() {
         }
       </div>
 
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 bg-neutral-50/80 dark:bg-neutral-950 min-h-full">
 
       {/* ── KPI cards ───────────────────────────────────────── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
         <MC label="Portfolio"  value={fmt$(m?.portfolio_value  ?? 1_000_000)}
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>}
           change={m ? fmtPct(m.pnl_pct) : undefined} positive={(m?.pnl_pct ?? 0) >= 0}
+          accent={(m?.pnl_pct ?? 0) >= 0 ? "green" : "red"}
           sub={<EquityCurve data={equity.slice(-80)} />} />
         <MC label="Sharpe"    value={fmtN(m?.sharpe_ratio ?? 0)}
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>}
           change={m?.sortino_ratio != null ? `Sortino ${fmtN(m.sortino_ratio)}` : undefined}
-          positive={(m?.sharpe_ratio ?? 0) >= 1} />
-        <MC label="Drawdown"  value={fmtPct(-(m?.max_drawdown ?? 0))}
+          positive={(m?.sharpe_ratio ?? 0) >= 1}
+          accent={(m?.sharpe_ratio ?? 0) >= 1 ? "green" : (m?.sharpe_ratio ?? 0) >= 0 ? "amber" : "red"} />
+        <MC label="Drawdown"  value={fmtPct(Math.abs(m?.max_drawdown ?? 0))}
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>}
           positive={false}
+          accent={(m?.max_drawdown ?? 0) < 0.1 ? "green" : (m?.max_drawdown ?? 0) < 0.2 ? "amber" : "red"}
           sub={<DrawdownGauge current={m?.current_drawdown ?? 0} max={m?.max_drawdown ?? 0} />} />
         <MC label="Win Rate"  value={`${((m?.win_rate ?? 0) * 100).toFixed(0)}%`}
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>}
-          positive={(m?.win_rate ?? 0) >= 0.5} />
+          positive={(m?.win_rate ?? 0) >= 0.5}
+          accent={(m?.win_rate ?? 0) >= 0.55 ? "green" : (m?.win_rate ?? 0) >= 0.45 ? "amber" : "red"} />
         <MC label="Alpha"     value={fmtPct(m?.alpha ?? 0)}
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M12 2 2 19h20L12 2z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>}
-          positive={(m?.alpha ?? 0) >= 0} />
+          positive={(m?.alpha ?? 0) >= 0}
+          accent={(m?.alpha ?? 0) >= 0 ? "green" : "red"} />
         <MC label="Beta"      value={fmtN(m?.beta ?? 1, 2)}
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="M6 3v18"/><path d="M6 3h8a4 4 0 0 1 0 8H6"/><path d="M6 11h9a4 4 0 0 1 0 8H6"/></svg>}
-          positive={Math.abs((m?.beta ?? 1) - 1) < 0.2} />
+          positive={Math.abs((m?.beta ?? 1) - 1) < 0.2}
+          accent="blue" />
         <MC label="Cash"      value={fmt$(m?.cash ?? 1_000_000)}
+          accent="blue"
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>} />
         <MC label="Trades"    value={String(m?.total_trades ?? 0)}
+          accent="purple"
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="m3 7 5 5-5 5"/><path d="m21 17-5-5 5-5"/><line x1="9" y1="12" x2="15" y2="12"/></svg>} />
       </div>
 
@@ -1031,22 +1058,24 @@ export default function DashboardPage() {
 
           {/* Risk summary row */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3 flex flex-col items-center justify-center">
+            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3 flex flex-col items-center justify-center hover:shadow-sm transition-shadow">
               <RiskMeter sharpe={m?.sharpe_ratio ?? 0} sortino={m?.sortino_ratio ?? 0} />
             </div>
-            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3">
-              <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium mb-2">Daily P&L</div>
-              <div className={cn("text-[20px] font-bold tabular-nums", (m?.pnl_daily ?? 0) >= 0 ? "text-emerald-600" : "text-red-500")}>
+            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3 hover:shadow-sm transition-shadow overflow-hidden relative">
+              <div className={cn("absolute top-0 left-0 right-0 h-0.5", (m?.pnl_daily ?? 0) >= 0 ? "bg-emerald-500" : "bg-red-500")} />
+              <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-2">Daily P&L</div>
+              <div className={cn("text-[20px] font-bold tabular-nums", (m?.pnl_daily ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
                 {(m?.pnl_daily ?? 0) >= 0 ? "+" : ""}{fmt$(m?.pnl_daily ?? 0)}
               </div>
-              <div className="text-[10px] text-neutral-400 mt-1">
-                Cumulative: {(m?.pnl_cumulative ?? 0) >= 0 ? "+" : ""}{fmt$(m?.pnl_cumulative ?? 0)}
+              <div className="text-[10px] text-neutral-400 mt-1 tabular-nums">
+                Cumul: <span className={cn("font-semibold", (m?.pnl_cumulative ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>{(m?.pnl_cumulative ?? 0) >= 0 ? "+" : ""}{fmt$(m?.pnl_cumulative ?? 0)}</span>
               </div>
             </div>
-            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3">
-              <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-medium mb-2">Volatility</div>
-              <div className="text-[20px] font-bold tabular-nums">{fmtPct(m?.volatility ?? 0)}</div>
-              <div className="text-[10px] text-neutral-400 mt-1">β {fmtN(m?.beta ?? 1, 2)} · α {fmtPct(m?.alpha ?? 0)}</div>
+            <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 p-3 hover:shadow-sm transition-shadow overflow-hidden relative">
+              <div className="absolute top-0 left-0 right-0 h-0.5 bg-sky-500" />
+              <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-2">Volatility</div>
+              <div className="text-[20px] font-bold tabular-nums text-neutral-800 dark:text-neutral-100">{fmtPct(m?.volatility ?? 0)}</div>
+              <div className="text-[10px] text-neutral-400 mt-1 tabular-nums">β <span className="font-semibold text-neutral-600 dark:text-neutral-300">{fmtN(m?.beta ?? 1, 2)}</span> · α <span className={cn("font-semibold", (m?.alpha ?? 0) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>{fmtPct(m?.alpha ?? 0)}</span></div>
             </div>
           </div>
 
@@ -1069,8 +1098,10 @@ export default function DashboardPage() {
                   <button key={lv} onClick={() => setLogFilter(lv)}
                     className={cn("rounded-md px-2 py-0.5 text-[9px] font-bold uppercase transition-all",
                       logFilter === lv
-                        ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
-                        : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300")}>
+                        ? lv === "ERROR" ? "bg-red-500 text-white"
+                          : lv === "WARN" ? "bg-amber-500 text-white"
+                          : "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+                        : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800")}>
                     {lv}
                   </button>
                 ))}
@@ -1124,19 +1155,21 @@ export default function DashboardPage() {
 
           {/* Side tabs */}
           <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 flex flex-col" style={{ minHeight: 400 }}>
-            {/* Tab bar — horizontal scroll on small screens, no visible scrollbar */}
-            <div className="flex border-b border-neutral-100 dark:border-neutral-800/60 overflow-x-auto scrollbar-none shrink-0">
+            {/* Tab bar */}
+            <div className="flex border-b border-neutral-100 dark:border-neutral-800/60 overflow-x-auto scrollbar-none shrink-0 p-1 gap-0.5">
               {SIDE_TABS.map(({ id, label, count }) => (
                 <button key={id} onClick={() => setTab(id)}
                   className={cn(
-                    "flex-1 min-w-max px-2 py-2.5 text-[10px] font-semibold whitespace-nowrap transition-all border-b-2",
+                    "flex-1 min-w-max px-2 py-1.5 text-[10px] font-semibold whitespace-nowrap rounded-lg transition-all",
                     tab === id
-                      ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
-                      : "border-transparent text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+                      ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
+                      : "text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800/60"
                   )}>
                   {label}
                   {count != null && count > 0 && (
-                    <span className="ml-1 text-[8px] bg-neutral-100 dark:bg-neutral-800 rounded-full px-1.5 py-0.5 tabular-nums">{count}</span>
+                    <span className={cn("ml-1 text-[8px] rounded-full px-1.5 py-0.5 tabular-nums",
+                      tab === id ? "bg-white/20 dark:bg-neutral-900/20" : "bg-neutral-100 dark:bg-neutral-800"
+                    )}>{count}</span>
                   )}
                 </button>
               ))}

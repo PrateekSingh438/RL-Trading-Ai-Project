@@ -322,8 +322,8 @@ class StepRewardShaper:
         turnover = np.sum(np.abs(action - prev_action))
         shaped -= 0.01 * turnover * self.transaction_cost
 
-        # P&L bonus/penalty
-        if prev_portfolio_value > 0:
+        # P&L bonus/penalty — only when portfolio is meaningfully sized
+        if prev_portfolio_value > 1000.0:
             pnl_pct = (portfolio_value - prev_portfolio_value) / prev_portfolio_value
             shaped += 0.1 * float(np.tanh(pnl_pct * 100))
 

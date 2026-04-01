@@ -50,11 +50,11 @@ export default function DashboardLayout() {
       <div className="flex h-14 items-center justify-between border-b border-neutral-200/60 dark:border-neutral-800/60 px-4">
         {sidebarOpen && (
           <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-emerald-500 flex items-center justify-center">
+            <div className="h-6 w-6 rounded-md bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-sm shadow-emerald-500/30">
               <span className="text-white text-[10px] font-black">RL</span>
             </div>
             <span className="text-[13px] font-bold tracking-tight text-neutral-800 dark:text-neutral-100">
-              Trader
+              RL Trader
             </span>
           </div>
         )}

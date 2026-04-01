@@ -19,8 +19,13 @@ pip-wheel-metadata/
 # Virtual environments
 .venv/
 venv/
-env/
 ENV/
+# Only ignore top-level env/ (venv dirs), not project subfolders named env/
+/env/
+**/venv/
+**/.venv/
+# Explicitly keep the trading environment source folder
+!rl_trading_system_full/rl-trading-system/env/
 
 # Node / React
 node_modules/
