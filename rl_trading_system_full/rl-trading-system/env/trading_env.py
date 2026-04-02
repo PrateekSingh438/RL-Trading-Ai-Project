@@ -112,12 +112,14 @@ class TradingEnv:
         """Construct observation vector."""
         prices = self.price_data[self.current_step]
 
-        # Normalize cash and positions relative to portfolio value
-        norm_factor = max(self.portfolio_value, 1.0)
+        # Normalize relative to initial_capital (stable anchor), not current portfolio value.
+        # Using max(portfolio_value, 1.0) caused observations to blow up 1000× when
+        # the portfolio shrank, destabilising the neural network.
+        norm_factor = max(self.portfolio_value, self.initial_capital * 0.1)
         obs_parts = [
-            np.array([self.cash / norm_factor]),                    # Normalized cash
-            self.positions * prices / norm_factor,                   # Normalized position values
-            prices / prices.mean(),                                  # Normalized prices
+            np.array([self.cash / norm_factor]),           # Normalized cash
+            self.positions * prices / norm_factor,          # Normalized position values
+            prices / (prices.mean() + 1e-10),               # Normalized prices
         ]
 
         # Add features for each asset
@@ -199,11 +201,19 @@ class TradingEnv:
         if len(benchmark_rets) < len(portfolio_returns):
             benchmark_rets = np.zeros(len(portfolio_returns))
 
+        # Compute running peak and current drawdown for reward function.
+        # BUG FIX: current_drawdown was never passed before → drawdown penalty was always 0.
+        peak_pv = max(self.portfolio_history) if self.portfolio_history else self.initial_capital
+        current_drawdown = max(0.0, (peak_pv - self.portfolio_value) / max(peak_pv, 1.0))
+
         reward = self.reward_fn.step_reward(
             portfolio_return=step_return,
             benchmark_return=self.benchmark_returns[min(self.current_step, len(self.benchmark_returns) - 1)],
             portfolio_history=portfolio_returns,
-            benchmark_history=benchmark_rets
+            benchmark_history=benchmark_rets,
+            current_drawdown=current_drawdown,          # was always 0.0 before
+            positions=self.positions,                    # enables entropy bonus
+            regime=str(self.regime_detector.get_regime_name()),
         )
 
         # Shape reward
@@ -212,7 +222,8 @@ class TradingEnv:
             action=modified_actions,
             prev_action=self.prev_actions,
             portfolio_value=self.portfolio_value,
-            prev_portfolio_value=self.prev_portfolio_value
+            prev_portfolio_value=self.prev_portfolio_value,
+            initial_capital=self.initial_capital,        # enables capital preservation signal
         )
 
         # 8. Update state
