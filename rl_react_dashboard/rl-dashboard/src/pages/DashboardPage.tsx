@@ -547,28 +547,35 @@ function FeatureImportance({ data }: { data: Record<string, number> }) {
 // ─── Trade Performance Analytics ────────────────────────────────────────────
 
 function TradeAnalytics({ trades }: { trades: any[] }) {
-  const completed = trades.filter((t) => t.action === "BUY" || t.action === "SELL");
-  const recent = completed.slice(-40);
+  // Backend signals only carry: action, symbol, price, quantity — no pnl_pct.
+  // Compute round-trip P&L by pairing each SELL with its earliest pending BUY
+  // for the same symbol (FIFO matching).
+  const roundTrips: { ret: number; symbol: string }[] = [];
+  const buyQueues: Record<string, number[]> = {};
 
-  // Rolling win rate: pair up BUY→SELL as round trips, or treat each trade return
-  // Use pnl_pct if present, otherwise fall back to action-based coloring
-  const bars = recent.slice(-20).map((t) => {
-    const ret = t.pnl_pct ?? t.return ?? (t.action === "BUY" ? null : null);
-    const won = ret != null ? ret > 0 : t.action === "SELL" ? (t.pnl_pct ?? 0) > 0 : null;
-    return { won, ret, action: t.action };
-  });
+  for (const t of trades) {
+    const sym = t.symbol ?? "";
+    if (t.action === "BUY" && t.price > 0) {
+      if (!buyQueues[sym]) buyQueues[sym] = [];
+      buyQueues[sym].push(t.price);
+    } else if (t.action === "SELL" && t.price > 0 && buyQueues[sym]?.length) {
+      const buyPrice = buyQueues[sym].shift()!;
+      roundTrips.push({ ret: (t.price - buyPrice) / buyPrice, symbol: sym });
+    }
+  }
 
-  // Stats from all completed trades with return info
-  const withReturn = completed.filter((t) => t.pnl_pct != null || t.return != null);
-  const returns    = withReturn.map((t) => t.pnl_pct ?? t.return ?? 0);
-  const wins       = returns.filter((r) => r > 0);
-  const losses     = returns.filter((r) => r < 0);
-  const winRate    = returns.length > 0 ? wins.length / returns.length : null;
-  const avgRet     = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : null;
-  const bestRet    = returns.length > 0 ? Math.max(...returns) : null;
-  const worstRet   = returns.length > 0 ? Math.min(...returns) : null;
-  const avgWin     = wins.length   > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : null;
-  const avgLoss    = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : null;
+  const returns  = roundTrips.map((r) => r.ret);
+  const wins     = returns.filter((r) => r > 0);
+  const losses   = returns.filter((r) => r < 0);
+  const winRate  = returns.length > 0 ? wins.length / returns.length : null;
+  const avgRet   = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : null;
+  const bestRet  = returns.length > 0 ? Math.max(...returns) : null;
+  const worstRet = returns.length > 0 ? Math.min(...returns) : null;
+  const avgWin   = wins.length   > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : null;
+  const avgLoss  = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : null;
+
+  // Last 20 completed round trips for the bar chart
+  const bars = roundTrips.slice(-20);
 
   // Current streak
   let streak = 0;
@@ -580,9 +587,8 @@ function TradeAnalytics({ trades }: { trades: any[] }) {
     else break;
   }
 
-  // Buy vs sell count from all signals
-  const buys  = completed.filter((t) => t.action === "BUY").length;
-  const sells = completed.filter((t) => t.action === "SELL").length;
+  const buys  = trades.filter((t) => t.action === "BUY").length;
+  const sells = trades.filter((t) => t.action === "SELL").length;
 
   const pf = (v: number | null, d = 2) =>
     v == null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(d)}%`;
@@ -596,7 +602,7 @@ function TradeAnalytics({ trades }: { trades: any[] }) {
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
           </svg>
           <span className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-300">Trade Analytics</span>
-          <span className="text-[9px] text-neutral-400 tabular-nums">{completed.length} trades</span>
+          <span className="text-[9px] text-neutral-400 tabular-nums">{roundTrips.length} round trips</span>
         </div>
         {streakType && streak >= 2 && (
           <span className={cn(
@@ -611,14 +617,16 @@ function TradeAnalytics({ trades }: { trades: any[] }) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Rolling win-rate bar chart — last 20 trades */}
-        {completed.length === 0 ? (
+        {/* Rolling win-rate bar chart — last 20 round trips */}
+        {trades.length === 0 ? (
           <div className="text-[11px] text-neutral-400 text-center py-4">No trades yet</div>
         ) : (
           <>
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">Last 20 Trades</span>
+                <span className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">
+                  {bars.length > 0 ? `Last ${bars.length} Round Trips` : "Waiting for BUY→SELL pairs…"}
+                </span>
                 {winRate != null && (
                   <span className={cn("text-[11px] font-bold tabular-nums", winRate >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
                     {(winRate * 100).toFixed(0)}% win rate
@@ -627,19 +635,19 @@ function TradeAnalytics({ trades }: { trades: any[] }) {
               </div>
               <div className="flex items-end gap-0.5 h-8">
                 {bars.length === 0 ? (
-                  <span className="text-[10px] text-neutral-400">Waiting for trades…</span>
+                  // Show pending BUYs as neutral bars until SELLs arrive
+                  trades.filter((t) => t.action === "BUY").slice(-20).map((_, i) => (
+                    <div key={i} className="flex-1 rounded-sm bg-sky-400/40" style={{ height: "40%" }} title="Open position" />
+                  ))
                 ) : (
                   bars.map((b, i) => {
-                    // height proportional to |return|, capped at full bar
-                    const mag  = b.ret != null ? Math.min(Math.abs(b.ret) * 400, 1) : 0.5;
-                    const h    = Math.max(mag * 100, 20);
-                    const bg   = b.ret != null
-                      ? (b.ret > 0 ? "bg-emerald-500" : "bg-red-500")
-                      : (b.action === "BUY" ? "bg-sky-400" : "bg-amber-400");
+                    const mag = Math.min(Math.abs(b.ret) * 500, 1);
+                    const h   = Math.max(mag * 100, 15);
+                    const bg  = b.ret > 0 ? "bg-emerald-500" : "bg-red-500";
                     return (
                       <div
                         key={i}
-                        title={b.ret != null ? pf(b.ret) : b.action}
+                        title={`${b.symbol} ${pf(b.ret)}`}
                         className={cn("flex-1 rounded-sm transition-all", bg)}
                         style={{ height: `${h}%` }}
                       />
