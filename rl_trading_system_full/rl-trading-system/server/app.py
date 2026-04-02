@@ -99,7 +99,7 @@ live_news_cache: List[dict] = []         # last N live headlines across all tick
 cached_data: dict = {"loaded": False, "train": None, "test": None, "tickers": None}
 trained_agent: dict = {"agent": None}
 
-_live_fetcher = LiveNewsFetcher(cache_ttl=180)   # 3-min cache for live news
+_live_fetcher = LiveNewsFetcher(cache_ttl=55)    # 55-s cache for live news
 _news_gen     = NewsGenerator(seed=42)
 _sentiment    = SentimentAnalyzer()
 _explainer    = TradeExplainer()
@@ -287,33 +287,43 @@ def _refresh_live_prices():
 
 # ─── Live news refresh ────────────────────────────────────────────────────────
 
+def _do_news_refresh(force: bool = False):
+    """Fetch live news for all tickers and update cache. Thread-safe."""
+    try:
+        tickers = CONFIG.data.tickers   # fetch all tickers, not just top 3
+        if force:
+            # Bypass the per-ticker in-memory cache by clearing it
+            _live_fetcher._cache.clear()
+        items = _live_fetcher.fetch_many(tickers)
+        if items:
+            live_news_cache.clear()
+            for it in items[:40]:
+                live_news_cache.append({
+                    "title":        it.title,
+                    "source":       it.source,
+                    "ticker":       it.ticker,
+                    "sentiment":    it.sentiment,
+                    "confidence":   round(it.confidence, 3),
+                    "impact_score": round(it.impact_score, 3),
+                    "url":          it.url,
+                    "timestamp":    it.timestamp,
+                    "is_live":      it.is_live,
+                    "ai_scored":    getattr(it, "ai_scored", False),
+                })
+            add_log("INFO",
+                    f"Live news refreshed: {len(items)} articles for {tickers}",
+                    "sentiment")
+            return True
+    except Exception as e:
+        add_log("WARN", f"Live news refresh failed: {e}", "sentiment")
+    return False
+
+
 def _refresh_live_news():
-    """Background thread: fetch live headlines every 5 min."""
+    """Background thread: fetch live headlines every 60 s."""
     while True:
-        try:
-            tickers = CONFIG.data.tickers[:3]   # top 3 to reduce API calls
-            items = _live_fetcher.fetch_many(tickers)
-            if items:
-                live_news_cache.clear()
-                for it in items[:30]:
-                    live_news_cache.append({
-                        "title": it.title,
-                        "source": it.source,
-                        "ticker": it.ticker,
-                        "sentiment": it.sentiment,
-                        "confidence": round(it.confidence, 3),
-                        "impact_score": round(it.impact_score, 3),
-                        "url": it.url,
-                        "timestamp": it.timestamp,
-                        "is_live": it.is_live,
-                        "ai_scored": getattr(it, "ai_scored", False),
-                    })
-                add_log("INFO",
-                        f"Live news refreshed: {len(items)} articles for {tickers}",
-                        "sentiment")
-        except Exception as e:
-            add_log("WARN", f"Live news refresh failed: {e}", "sentiment")
-        time.sleep(300)
+        _do_news_refresh()
+        time.sleep(60)
 
 
 # ─── Training ─────────────────────────────────────────────────────────────────
@@ -358,10 +368,11 @@ def train_agent(n_episodes: int = 50):
                     f"MaxDD: {p.get('max_drawdown',0):.2%}",
                     "training")
 
-        # Early stop if drawdown is catastrophic during training
+        # Skip to next episode if this one had catastrophic drawdown
+        # (was break — which aborted the ENTIRE training loop, preventing the agent from learning)
         if p.get("max_drawdown", 0) > 0.50:
-            add_log("WARN", f"Early stop at ep {ep+1}: max_drawdown > 50%", "training")
-            break
+            add_log("WARN", f"Ep {ep+1}: max_drawdown > 50%, resetting for next episode", "training")
+            continue
 
     trained_agent["agent"] = agent
     agent_state.update({"training_status": "trained", "training_progress": 100})
@@ -753,6 +764,14 @@ async def sentiment_news(ticker: str = None, limit: int = 30):
             "timestamp": it.timestamp, "is_live": False, "ai_scored": False,
         } for it in items]
     return ok(news[:limit])
+
+@app.post("/api/v1/sentiment/news/refresh")
+async def refresh_news():
+    """Force-refresh live news cache immediately (bypasses TTL)."""
+    success = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _do_news_refresh(force=True)
+    )
+    return ok({"refreshed": success, "count": len(live_news_cache)})
 
 @app.get("/api/v1/portfolio/analysis")
 async def portfolio_analysis():

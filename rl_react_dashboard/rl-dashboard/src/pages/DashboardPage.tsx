@@ -112,8 +112,7 @@ function LiveTicker({ prices }: { prices: Record<string, any> }) {
 
   if (!Object.keys(prices).length) return null;
 
-  const allSimulated = Object.values(prices).every((d: any) => d.simulated);
-  const anyLive      = Object.values(prices).some((d: any) => !d.simulated);
+  const anyLive = Object.values(prices).some((d: any) => !d.simulated);
 
   return (
     <div className="flex gap-2 flex-wrap items-center">
@@ -409,14 +408,29 @@ function SentimentPanel({ signals }: { signals: any[] }) {
 
 // ─── Live news panel ──────────────────────────────────────────────────────────
 
-function NewsPanel({ news }: { news: any[] }) {
+function NewsPanel({ news, onRefresh }: { news: any[]; onRefresh?: () => Promise<void> }) {
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (!onRefresh || refreshing) return;
+    setRefreshing(true);
+    await onRefresh();
+    setTimeout(() => setRefreshing(false), 1500);
+  };
+
   if (!news.length)
     return (
-      <div className="flex flex-col items-center justify-center gap-2 py-8">
+      <div className="flex flex-col items-center justify-center gap-3 py-8">
         <div className="flex items-center gap-1.5">
           <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
           <span className="text-[11px] text-neutral-400">Fetching live news…</span>
         </div>
+        {onRefresh && (
+          <button onClick={handleRefresh} disabled={refreshing}
+            className="rounded-lg px-3 py-1.5 text-[10px] font-semibold bg-sky-500/10 border border-sky-500/25 text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-all disabled:opacity-50">
+            {refreshing ? "Refreshing…" : "Fetch now"}
+          </button>
+        )}
       </div>
     );
 
@@ -435,6 +449,15 @@ function NewsPanel({ news }: { news: any[] }) {
       <div className="flex items-center justify-between px-1 mb-1">
         <span className="text-[10px] text-neutral-400">{news.length} articles</span>
         <div className="flex items-center gap-1.5">
+          {onRefresh && (
+            <button onClick={handleRefresh} disabled={refreshing}
+              title="Refresh news"
+              className="rounded-md p-1 text-neutral-400 hover:text-sky-500 hover:bg-sky-500/10 transition-all disabled:opacity-40">
+              <svg className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+              </svg>
+            </button>
+          )}
           {aiCount > 0 && (
             <div className="flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/25 px-2 py-0.5">
               <svg className="w-2.5 h-2.5 text-violet-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -540,7 +563,7 @@ function LogLine({ l }: { l: any }) {
 
 // ─── AI Analyst ───────────────────────────────────────────────────────────────
 
-function AIAnalyst({ metrics, positions }: { metrics: any; positions: any[] }) {
+function AIAnalyst() {
   const [text, setText]           = useState("");
   const [loading, setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -686,6 +709,8 @@ function AgentCtrl() {
   const [tProgress, setTProgress] = useState(0);
   const [nEp, setNEp]           = useState(50);
   const [showCfg, setShowCfg]   = useState(false);
+  // Track whether user has manually changed config — if so, don't let poll overwrite
+  const userEditedRef = useRef(false);
 
   useEffect(() => {
     const poll = async () => {
@@ -695,11 +720,14 @@ function AgentCtrl() {
         const a = d.data?.[0];
         if (a) {
           setRunning(a.status === "running");
-          setModel(a.model ?? "ensemble");
-          setMode(a.mode ?? "paper");
           setTStatus(a.training_status ?? "");
           setTProgress(a.training_progress ?? 0);
-          if (a.n_episodes) setNEp(a.n_episodes);
+          // Only sync config fields from server on first load (before user touches anything)
+          if (!userEditedRef.current) {
+            setModel(a.model ?? "ensemble");
+            setMode(a.mode ?? "paper");
+            if (a.n_episodes) setNEp(a.n_episodes);
+          }
         }
       } catch {}
     };
@@ -750,7 +778,7 @@ function AgentCtrl() {
       {/* Paper / Live */}
       <div className="flex rounded-lg bg-neutral-100 dark:bg-neutral-800/80 p-0.5 mb-3">
         {(["paper", "live"] as const).map((m) => (
-          <button key={m} onClick={() => setMode(m)}
+          <button key={m} onClick={() => { userEditedRef.current = true; setMode(m); }}
             className={cn("flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-all",
               mode === m
                 ? m === "live" ? "bg-red-500 text-white shadow-sm" : "bg-white dark:bg-neutral-700 text-neutral-800 dark:text-neutral-100 shadow-sm"
@@ -761,7 +789,7 @@ function AgentCtrl() {
       </div>
 
       {/* Model */}
-      <select value={model} onChange={(e) => setModel(e.target.value)}
+      <select value={model} onChange={(e) => { userEditedRef.current = true; setModel(e.target.value); }}
         className="w-full rounded-lg bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-3 py-2 text-[11px] text-neutral-700 dark:text-neutral-300 mb-3 outline-none focus:border-emerald-500 font-medium">
         <option value="ensemble">Ensemble (PPO + SAC)</option>
         <option value="ppo">PPO only</option>
@@ -787,7 +815,7 @@ function AgentCtrl() {
         <div className="rounded-lg border border-neutral-200/60 dark:border-neutral-700/40 bg-neutral-50/50 dark:bg-neutral-800/30 p-3 mb-3">
           <div className="flex flex-wrap gap-1 mb-3">
             {EP_QUICK.map((n) => (
-              <button key={n} onClick={() => setNEp(n)}
+              <button key={n} onClick={() => { userEditedRef.current = true; setNEp(n); }}
                 className={cn("rounded-md px-2.5 py-1 text-[10px] font-bold border transition-all",
                   nEp === n
                     ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
@@ -797,9 +825,9 @@ function AgentCtrl() {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <input type="range" min={5} max={500} step={5} value={nEp} onChange={(e) => setNEp(Number(e.target.value))}
+            <input type="range" min={5} max={500} step={5} value={nEp} onChange={(e) => { userEditedRef.current = true; setNEp(Number(e.target.value)); }}
               className="flex-1 h-1.5 rounded-full appearance-none bg-neutral-200 dark:bg-neutral-700 accent-emerald-500 cursor-pointer" />
-            <input type="number" min={1} max={2000} value={nEp} onChange={(e) => setNEp(Math.max(1, Number(e.target.value)))}
+            <input type="number" min={1} max={2000} value={nEp} onChange={(e) => { userEditedRef.current = true; setNEp(Math.max(1, Number(e.target.value))); }}
               className="w-16 rounded-md bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 px-2 py-1 text-[11px] text-center font-bold outline-none focus:border-emerald-500" />
           </div>
           <p className="text-[9px] text-neutral-400 mt-2">Tip: 10–50 episodes trains in ~1–3 min on CPU.</p>
@@ -863,11 +891,22 @@ export default function DashboardPage() {
   const [symbols,   setSymbols]   = useState<string[]>([]);
 
   const [logsOpen,   setLogsOpen]   = useState(true);
+
+  const refreshNews = async () => {
+    try {
+      await fetch(`${API}/sentiment/news/refresh`, { method: "POST" });
+      // Re-fetch news immediately after triggering refresh
+      const r = await fetch(`${API}/sentiment/news?limit=20`);
+      const d = await r.json();
+      setNews(d.data ?? []);
+    } catch {}
+  };
   const logScrollRef = useRef<HTMLDivElement>(null);
   const logEnd       = useRef<HTMLDivElement>(null);
-  const logAtBottom  = useRef(true);   // tracks whether user is scrolled to bottom
+  const logAtBottom  = useRef(true);
   const prevSigsLen  = useRef(0);
   const prevRegime   = useRef<string | null>(null);
+  const chartFitRef  = useRef<(() => void) | null>(null);
 
   // Only auto-scroll when user is already at (or near) the bottom
   useEffect(() => {
@@ -1041,7 +1080,7 @@ export default function DashboardPage() {
                   </span>
                 )}
               </div>
-              <div className="flex gap-1">
+              <div className="flex items-center gap-1">
                 {symbols.map((s) => (
                   <button key={s} onClick={() => setChart(s)}
                     className={cn("rounded-md px-2 py-1 text-[10px] font-bold transition-all",
@@ -1051,9 +1090,18 @@ export default function DashboardPage() {
                     {s}
                   </button>
                 ))}
+                <div className="w-px h-3.5 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
+                <button
+                  onClick={() => chartFitRef.current?.()}
+                  title="Reset zoom"
+                  className="rounded-md p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                  </svg>
+                </button>
               </div>
             </div>
-            <TradingChart symbol={chartSymbol} signals={sigs} />
+            <TradingChart symbol={chartSymbol} signals={sigs} fitRef={chartFitRef} />
           </div>
 
           {/* Risk summary row */}
@@ -1080,7 +1128,7 @@ export default function DashboardPage() {
           </div>
 
           {/* AI Analyst */}
-          <AIAnalyst metrics={m} positions={positions} />
+          <AIAnalyst />
 
           {/* Logs */}
           <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60">
@@ -1185,7 +1233,7 @@ export default function DashboardPage() {
               )}
               {tab === "positions"  && <PositionsPanel positions={positions} />}
               {tab === "sentiment"  && <SentimentPanel signals={sigs} />}
-              {tab === "news"       && <NewsPanel news={news} />}
+              {tab === "news"       && <NewsPanel news={news} onRefresh={refreshNews} />}
               {tab === "importance" && <FeatureImportance data={featImp} />}
             </div>
           </div>
