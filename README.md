@@ -58,8 +58,8 @@ This system trains RL agents to trade a portfolio of stocks, then runs them live
 │  ── Candlestick chart  ──  Agent controls  ──────────────────────   │
 │  ── Risk meter  ·  Daily P&L  ·  Volatility  ────────────────────   │
 │  ── AI Portfolio Analyst (Groq streaming)  ───────────────────────  │
+│  ── Trade Analytics (win rate bars, streak, avg return)  ─────────  │
 │  ── Signals │ Positions │ Sentiment │ News │ Features  ──────────   │
-│  ── System logs (collapsible, smart auto-scroll)  ───────────────   │
 └───────────────────────────┬─────────────────────────────────────────┘
                             │  HTTP REST  +  WebSocket
                             ▼
@@ -67,7 +67,7 @@ This system trains RL agents to trade a portfolio of stocks, then runs them live
 │                       FastAPI Server  (v4)                          │
 │  /auth  /agents  /portfolio  /market  /sentiment  /ws               │
 │  ── Background: live price refresh (30 s, per-ticker fast_info) ──  │
-│  ── Background: live news + FinBERT scoring (5 min)  ────────────   │
+│  ── Background: live news + FinBERT scoring (60 s)  ─────────────   │
 │  ── WebSocket broadcast loop (1 s)  ─────────────────────────────   │
 └──────────┬───────────────────────────────────┬──────────────────────┘
            │                                   │
@@ -334,15 +334,15 @@ npm run build    # → dist/
 ├──────────────────────────────────────┤  ─ Paper / ⚠ Live           │
 │         Equity sparkline embedded    │  ─ Model selector           │
 ├──────────────────────────────────────┤  ─ Episodes (5–500)         │
-│  Candlestick chart                   │  ─ Start / Stop             │
+│  Candlestick chart  [Reset Zoom]     │  ─ Start / Stop             │
 │  (BUY ▲ / SELL ▼ markers)           ├─────────────────────────────┤
 │                                      │  Signals │ Positions        │
 ├───────────┬──────────────────────────┤  Sentiment│ News │ Features │
 │ Risk meter│  Daily P&L │  Volatility │                             │
 ├───────────┴────────────────────────────────────────────────────────┤
-│  AI Portfolio Analyst  [Analyze]  ← Groq Llama 3.1 streaming      │
+│  AI Portfolio Analyst  [Analyze]  ← Groq streaming, md rendering  │
 ├────────────────────────────────────────────────────────────────────┤
-│  System Logs  [ALL][INFO][WARN][ERROR]  [↓]  [▲▼]                 │
+│  Trade Analytics  ← rolling win-rate bars · streak · avg return   │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -350,15 +350,15 @@ npm run build    # → dist/
 |-------|-------------|
 | **Live ticker** | Sticky header; real-time prices with flash on change; `● LIVE` or `SIM` badge |
 | **KPI cards** | Portfolio value, Sharpe, max drawdown gauge, win rate, alpha, beta, cash, trades |
-| **Candlestick chart** | Lightweight Charts; symbol switcher; BUY/SELL markers |
+| **Candlestick chart** | Lightweight Charts; symbol switcher; BUY/SELL markers; Reset Zoom button; zoom state preserved across live refreshes |
 | **Risk meter** | Semicircle gauge mapping Sharpe → 0–100 health score |
-| **AI Analyst** | Groq Llama 3.1 streaming report; rendered markdown; re-analyze anytime |
+| **AI Analyst** | Groq Llama 3.1 streaming report; full markdown rendering (headings, bold, bullets); re-analyze anytime |
+| **Trade Analytics** | Rolling win-rate bar chart (last 20 trades); win/loss streak badge; avg return, avg win/loss, best/worst trade, buy/sell counts |
 | **Signals tab** | Trade signals with expandable reasoning, sentiment arrow, regime tag |
 | **Positions tab** | Open positions with long/short badge, weight bar |
 | **Sentiment tab** | Dominant sentiment over last 50 signals; per-symbol breakdown |
-| **News tab** | Real headlines (`● LIVE`) or simulated (`SIM`); `AI` badge for FinBERT-scored items |
+| **News tab** | Real headlines (`● LIVE`) or simulated (`SIM`); `AI` badge for FinBERT-scored items; manual refresh button |
 | **Features tab** | Top-10 feature importance bars |
-| **System logs** | Level filter; collapsible; smart auto-scroll |
 
 ---
 
@@ -409,13 +409,8 @@ All endpoints: `/api/v1/…`
 | Method | Endpoint | Response |
 |--------|----------|----------|
 | GET | `/sentiment/news?limit=20` | `NewsItem[]` with `is_live`, `ai_scored`, `sentiment`, `impact_score` |
+| POST | `/sentiment/news/refresh` | Force-refresh live news cache immediately |
 | GET | `/sentiment/status` | FinBERT model load status |
-
-### System
-
-| Method | Endpoint | Response |
-|--------|----------|----------|
-| GET | `/logs?level=INFO&limit=100` | `LogEntry[]` |
 
 ### WebSocket
 
@@ -480,14 +475,26 @@ R = w₁·R_ann  −  w₂·σ_down  +  w₃·D_ret  +  w₄·T_ry  +  w₅·R_s
     − drawdown_penalty
 ```
 
-| Component | Symbol | Description | Default weight |
-|-----------|--------|-------------|---------------|
+| Component | Symbol | Description | Weight (v3) |
+|-----------|--------|-------------|-------------|
 | Annualised return | R_ann | `(∏(1+rₜ))^(252/T) − 1` | 0.30 |
-| Downside deviation | σ_down | `std(min(r−rₓ, 0)) × √252` | 0.20 |
-| Differential return | D_ret | `(μ_p − μ_b) / |β|` | 0.15 |
-| Treynor ratio | T_ry | `(R_ann − Rₓ) / β` | 0.15 |
-| Sharpe ratio | R_sharpe | `(μ − rₓ) / σ × √252` | 0.15 |
+| Downside deviation | σ_down | `std(min(r−rₓ, 0)) × √252` | **0.25** |
+| Differential return | D_ret | `(μ_p − μ_b) / |β|` | **0.10** |
+| Treynor ratio | T_ry | `(R_ann − Rₓ) / β` | **0.10** |
+| Sharpe ratio | R_sharpe | `(μ − rₓ) / σ × √252` | **0.20** |
 | Portfolio entropy | H_entropy | Shannon entropy of position weights | 0.05 |
+
+**Drawdown penalty (v3 — exponential):**
+
+| Drawdown | Penalty |
+|----------|---------|
+| < 3% | 0 (ignored) |
+| 5% | ~0.08 |
+| 10% | ~0.32 |
+| 20% | ~1.28 |
+| 30% | 2.88 (approaching clip) |
+
+**Per-step shaping** (`StepRewardShaper`): turnover penalty `0.05 × Δaction`, direct P&L signal `0.3 × tanh(pnl × 200)`, capital-preservation penalty when portfolio drops below 90% of initial capital.
 
 **Regime-adaptive scaling:**
 
@@ -546,9 +553,10 @@ The regime is included in every agent observation, used to scale reward weights,
 - Falls back to keyword-based scoring automatically if PyTorch/transformers are not installed
 
 **Live news** — `LiveNewsFetcher`
-- Fetches real headlines via `yfinance.Ticker.news` every 5 min
+- Fetches real headlines via `yfinance.Ticker.news` every 60 s (all configured tickers)
 - Batch-scored through FinBERT in one pass
 - Tagged `is_live=True`; shown with `● LIVE` badge
+- Manual force-refresh via dashboard button or `POST /sentiment/news/refresh`
 
 **DecisionValidator** adjusts actions on sentiment conflict: strong disagreement reduces position size by up to 50%.
 

@@ -544,19 +544,137 @@ function FeatureImportance({ data }: { data: Record<string, number> }) {
 
 // ─── Log line ─────────────────────────────────────────────────────────────────
 
-function LogLine({ l }: { l: any }) {
-  const c: Record<string, string> = {
-    INFO:  "text-sky-600 dark:text-sky-400",
-    WARN:  "text-amber-600 dark:text-amber-400",
-    ERROR: "text-red-600 dark:text-red-400",
-    DEBUG: "text-neutral-400",
-  };
-  const t = new Date(l.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+// ─── Trade Performance Analytics ────────────────────────────────────────────
+
+function TradeAnalytics({ trades }: { trades: any[] }) {
+  const completed = trades.filter((t) => t.action === "BUY" || t.action === "SELL");
+  const recent = completed.slice(-40);
+
+  // Rolling win rate: pair up BUY→SELL as round trips, or treat each trade return
+  // Use pnl_pct if present, otherwise fall back to action-based coloring
+  const bars = recent.slice(-20).map((t) => {
+    const ret = t.pnl_pct ?? t.return ?? (t.action === "BUY" ? null : null);
+    const won = ret != null ? ret > 0 : t.action === "SELL" ? (t.pnl_pct ?? 0) > 0 : null;
+    return { won, ret, action: t.action };
+  });
+
+  // Stats from all completed trades with return info
+  const withReturn = completed.filter((t) => t.pnl_pct != null || t.return != null);
+  const returns    = withReturn.map((t) => t.pnl_pct ?? t.return ?? 0);
+  const wins       = returns.filter((r) => r > 0);
+  const losses     = returns.filter((r) => r < 0);
+  const winRate    = returns.length > 0 ? wins.length / returns.length : null;
+  const avgRet     = returns.length > 0 ? returns.reduce((a, b) => a + b, 0) / returns.length : null;
+  const bestRet    = returns.length > 0 ? Math.max(...returns) : null;
+  const worstRet   = returns.length > 0 ? Math.min(...returns) : null;
+  const avgWin     = wins.length   > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : null;
+  const avgLoss    = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : null;
+
+  // Current streak
+  let streak = 0;
+  let streakType: "W" | "L" | null = null;
+  for (let i = returns.length - 1; i >= 0; i--) {
+    const w = returns[i] > 0;
+    if (streakType === null) { streakType = w ? "W" : "L"; streak = 1; }
+    else if ((streakType === "W") === w) streak++;
+    else break;
+  }
+
+  // Buy vs sell count from all signals
+  const buys  = completed.filter((t) => t.action === "BUY").length;
+  const sells = completed.filter((t) => t.action === "SELL").length;
+
+  const pf = (v: number | null, d = 2) =>
+    v == null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(d)}%`;
+
   return (
-    <div className="flex gap-2 text-[11px] font-mono leading-6 px-3 hover:bg-neutral-100/50 dark:hover:bg-white/[0.02]">
-      <span className="text-neutral-300 dark:text-neutral-700 tabular-nums shrink-0 select-none">{t}</span>
-      <span className={cn("shrink-0 w-11 font-semibold", c[l.level] ?? "")}>{l.level}</span>
-      <span className="text-neutral-600 dark:text-neutral-400 break-all">{l.message}</span>
+    <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800/60">
+        <div className="flex items-center gap-2">
+          <svg className="w-3.5 h-3.5 text-sky-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <span className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-300">Trade Analytics</span>
+          <span className="text-[9px] text-neutral-400 tabular-nums">{completed.length} trades</span>
+        </div>
+        {streakType && streak >= 2 && (
+          <span className={cn(
+            "rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+            streakType === "W"
+              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+              : "bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20"
+          )}>
+            {streak}{streakType} Streak
+          </span>
+        )}
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Rolling win-rate bar chart — last 20 trades */}
+        {completed.length === 0 ? (
+          <div className="text-[11px] text-neutral-400 text-center py-4">No trades yet</div>
+        ) : (
+          <>
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">Last 20 Trades</span>
+                {winRate != null && (
+                  <span className={cn("text-[11px] font-bold tabular-nums", winRate >= 0.5 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                    {(winRate * 100).toFixed(0)}% win rate
+                  </span>
+                )}
+              </div>
+              <div className="flex items-end gap-0.5 h-8">
+                {bars.length === 0 ? (
+                  <span className="text-[10px] text-neutral-400">Waiting for trades…</span>
+                ) : (
+                  bars.map((b, i) => {
+                    // height proportional to |return|, capped at full bar
+                    const mag  = b.ret != null ? Math.min(Math.abs(b.ret) * 400, 1) : 0.5;
+                    const h    = Math.max(mag * 100, 20);
+                    const bg   = b.ret != null
+                      ? (b.ret > 0 ? "bg-emerald-500" : "bg-red-500")
+                      : (b.action === "BUY" ? "bg-sky-400" : "bg-amber-400");
+                    return (
+                      <div
+                        key={i}
+                        title={b.ret != null ? pf(b.ret) : b.action}
+                        className={cn("flex-1 rounded-sm transition-all", bg)}
+                        style={{ height: `${h}%` }}
+                      />
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Stats grid */}
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { label: "Avg Return",  val: pf(avgRet),   pos: (avgRet ?? 0) >= 0 },
+                { label: "Avg Win",     val: pf(avgWin),   pos: true },
+                { label: "Avg Loss",    val: pf(avgLoss),  pos: false },
+                { label: "Best Trade",  val: pf(bestRet),  pos: true },
+                { label: "Worst Trade", val: pf(worstRet), pos: false },
+                { label: "Buy / Sell",  val: `${buys} / ${sells}`, pos: null },
+              ].map(({ label, val, pos }) => (
+                <div key={label} className="rounded-lg bg-neutral-50 dark:bg-neutral-800/60 px-3 py-2">
+                  <div className="text-[9px] uppercase tracking-wider text-neutral-400 font-semibold mb-0.5">{label}</div>
+                  <div className={cn(
+                    "text-[13px] font-bold tabular-nums",
+                    pos === null
+                      ? "text-neutral-700 dark:text-neutral-200"
+                      : pos
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-red-500 dark:text-red-400"
+                  )}>{val}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -668,6 +786,11 @@ function AIAnalyst() {
                 return <div key={i} className="text-[13px] font-bold text-violet-600 dark:text-violet-400 mt-4 border-b border-neutral-100 dark:border-neutral-800 pb-1">{line.replace(/^##\s/, "")}</div>;
               if (/^#\s/.test(line))
                 return <div key={i} className="text-[14px] font-bold text-neutral-900 dark:text-neutral-50 mt-4">{line.replace(/^#\s/, "")}</div>;
+              // Lines that are entirely **bold** (AI uses these as section headings)
+              if (/^\*\*(.+)\*\*$/.test(line)) {
+                const title = line.replace(/^\*\*/, "").replace(/\*\*$/, "");
+                return <div key={i} className="text-[13px] font-bold text-violet-600 dark:text-violet-400 mt-4 border-b border-neutral-100 dark:border-neutral-800 pb-1">{title}</div>;
+              }
               if (/^\*\s|^-\s/.test(line)) {
                 const content = line.replace(/^\*\s|^-\s/, "").replace(/\*\*(.+?)\*\*/g, "§§$1§§");
                 return (
@@ -871,15 +994,12 @@ function AgentCtrl() {
 type SideTab = "signals" | "positions" | "sentiment" | "news" | "importance";
 
 export default function DashboardPage() {
-  const logFilter    = useUIStore((s) => s.logFilter);
-  const setLogFilter = useUIStore((s) => s.setLogFilter);
   const chartSymbol  = useUIStore((s) => s.chartSymbol);
   const setChart     = useUIStore((s) => s.setChartSymbol);
   const push         = useNotificationStore((s) => s.push);
 
   const [m,         setM]         = useState<any>(null);
   const [sigs,      setSigs]      = useState<any[]>([]);
-  const [logs,      setLogs]      = useState<any[]>([]);
   const [online,    setOnline]    = useState(false);
   const [equity,    setEquity]    = useState<any[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
@@ -890,8 +1010,6 @@ export default function DashboardPage() {
   const [tab,       setTab]       = useState<SideTab>("signals");
   const [symbols,   setSymbols]   = useState<string[]>([]);
 
-  const [logsOpen,   setLogsOpen]   = useState(true);
-
   const refreshNews = async () => {
     try {
       await fetch(`${API}/sentiment/news/refresh`, { method: "POST" });
@@ -901,35 +1019,18 @@ export default function DashboardPage() {
       setNews(d.data ?? []);
     } catch {}
   };
-  const logScrollRef = useRef<HTMLDivElement>(null);
-  const logEnd       = useRef<HTMLDivElement>(null);
-  const logAtBottom  = useRef(true);
   const prevSigsLen  = useRef(0);
   const prevRegime   = useRef<string | null>(null);
   const chartFitRef  = useRef<(() => void) | null>(null);
-
-  // Only auto-scroll when user is already at (or near) the bottom
-  useEffect(() => {
-    if (logsOpen && logAtBottom.current) {
-      logEnd.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [logs, logsOpen]);
-
-  const onLogScroll = () => {
-    const el = logScrollRef.current;
-    if (!el) return;
-    logAtBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-  };
 
   // Main polling
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const [mr, tr, lr, er, pr, fr, sr, lpr, nr] = await Promise.all([
+        const [mr, tr, er, pr, fr, sr, lpr, nr] = await Promise.all([
           fetch(`${API}/portfolio/metrics`),
           fetch(`${API}/portfolio/trades`),
-          fetch(`${API}/logs?limit=150`),
           fetch(`${API}/portfolio/equity`),
           fetch(`${API}/portfolio/positions`),
           fetch(`${API}/portfolio/feature_importance`),
@@ -941,7 +1042,6 @@ export default function DashboardPage() {
         setM((await mr.json()).data);
         const newSigs = (await tr.json()).data ?? [];
         setSigs(newSigs);
-        setLogs(((await lr.json()).data ?? []).reverse());
         setEquity((await er.json()).data ?? []);
         setPositions((await pr.json()).data ?? []);
         setFeatImp((await fr.json()).data ?? {});
@@ -991,11 +1091,6 @@ export default function DashboardPage() {
     const id = setInterval(pollRegime, 5000);
     return () => { alive = false; clearInterval(id); };
   }, [push]);
-
-  const filteredLogs = useMemo(
-    () => (logFilter === "ALL" ? logs : logs.filter((l) => l.level === logFilter)),
-    [logs, logFilter],
-  );
 
   const SIDE_TABS: { id: SideTab; label: string; count?: number }[] = [
     { id: "signals",    label: "Signals",    count: sigs.length },
@@ -1066,7 +1161,7 @@ export default function DashboardPage() {
       {/* ── Main grid ───────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
-        {/* Left 2/3 : chart + logs */}
+        {/* Left 2/3 : chart + analytics */}
         <div className="lg:col-span-2 space-y-4">
 
           {/* Chart */}
@@ -1130,71 +1225,8 @@ export default function DashboardPage() {
           {/* AI Analyst */}
           <AIAnalyst />
 
-          {/* Logs */}
-          <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800/60">
-              <div className="flex items-center gap-2">
-                {/* Terminal icon */}
-                <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
-                </svg>
-                <span className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-300">System Logs</span>
-                <span className="text-[9px] text-neutral-400 tabular-nums">({filteredLogs.length})</span>
-              </div>
-              <div className="flex items-center gap-1">
-                {(["ALL", "INFO", "WARN", "ERROR"] as const).map((lv) => (
-                  <button key={lv} onClick={() => setLogFilter(lv)}
-                    className={cn("rounded-md px-2 py-0.5 text-[9px] font-bold uppercase transition-all",
-                      logFilter === lv
-                        ? lv === "ERROR" ? "bg-red-500 text-white"
-                          : lv === "WARN" ? "bg-amber-500 text-white"
-                          : "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
-                        : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800")}>
-                    {lv}
-                  </button>
-                ))}
-                {/* Divider */}
-                <div className="w-px h-3.5 bg-neutral-200 dark:bg-neutral-700 mx-0.5" />
-                {/* Scroll-to-bottom button — only when not at bottom */}
-                {!logAtBottom.current && logsOpen && (
-                  <button
-                    onClick={() => { logAtBottom.current = true; logEnd.current?.scrollIntoView({ behavior: "smooth" }); }}
-                    title="Scroll to latest"
-                    className="rounded-md p-1 text-neutral-400 hover:text-emerald-500 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all">
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                  </button>
-                )}
-                {/* Hide / show toggle */}
-                <button
-                  onClick={() => setLogsOpen((v) => !v)}
-                  title={logsOpen ? "Collapse logs" : "Expand logs"}
-                  className="rounded-md p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-all">
-                  {logsOpen ? (
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                      <polyline points="18 15 12 9 6 15"/>
-                    </svg>
-                  ) : (
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-            {logsOpen && (
-              <div
-                ref={logScrollRef}
-                onScroll={onLogScroll}
-                className="h-52 overflow-y-auto overscroll-contain scrollbar-thin py-1 font-mono">
-                {filteredLogs.length === 0
-                  ? <div className="text-[11px] text-neutral-400 text-center py-6">No logs yet</div>
-                  : filteredLogs.map((l) => <LogLine key={l.id} l={l} />)}
-                <div ref={logEnd} />
-              </div>
-            )}
-          </div>
+          {/* Trade Analytics */}
+          <TradeAnalytics trades={sigs} />
         </div>
 
         {/* Right 1/3 : agent + side panel */}

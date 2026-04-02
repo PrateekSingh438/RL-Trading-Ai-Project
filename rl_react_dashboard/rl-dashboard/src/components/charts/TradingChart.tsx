@@ -196,30 +196,29 @@ export default function TradingChart({
   }, [symbol]);
 
   // ── Render ────────────────────────────────────────────────────────────────
-  if (error) {
-    return (
-      <div
-        className="flex items-center justify-center bg-neutral-50 dark:bg-neutral-900"
-        style={{ height }}
-      >
-        <span className="text-xs text-neutral-500">{error} — start the backend first</span>
-      </div>
-    );
-  }
+  // Always render the container so containerRef is available for chart creation.
+  // Overlay loading / error states on top using absolute positioning.
+  return (
+    <div className="relative" style={{ height }}>
+      {/* Chart canvas target — always in DOM */}
+      <div ref={containerRef} className="absolute inset-0" />
 
-  if (candles.length === 0) {
-    return (
-      <div
-        className="flex items-center justify-center bg-neutral-50 dark:bg-neutral-900"
-        style={{ height }}
-      >
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-300 dark:border-neutral-700 border-t-emerald-500" />
-          <span className="text-xs text-neutral-400">Loading {symbol}…</span>
+      {/* Error overlay */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-neutral-50 dark:bg-neutral-900 z-10">
+          <span className="text-xs text-neutral-500">{error} — start the backend first</span>
         </div>
-      </div>
-    );
-  }
+      )}
 
-  return <div ref={containerRef} style={{ height }} />;
+      {/* Loading overlay — hide once candles arrive */}
+      {!error && candles.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center bg-neutral-50 dark:bg-neutral-900 z-10">
+          <div className="flex flex-col items-center gap-2">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-neutral-300 dark:border-neutral-700 border-t-emerald-500" />
+            <span className="text-xs text-neutral-400">Loading {symbol}…</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
