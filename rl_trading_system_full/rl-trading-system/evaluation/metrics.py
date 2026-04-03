@@ -122,15 +122,37 @@ class PerformanceEvaluator:
         profit_factor = 0.0
 
         if trades:
+            # Compute round-trip P&L: match each BUY with the next SELL per ticker
+            open_positions: dict = {}  # ticker -> (shares, avg_buy_price)
             trade_returns = []
-            consec_losses = 0
-            max_cl = 0
-            total_profit = 0
-            total_loss = 0
 
             for t in trades:
-                tr = t.get("return", 0)
-                trade_returns.append(tr)
+                ticker = t.get("ticker", "")
+                if t.get("action") == "BUY":
+                    prev_shares, prev_cost = open_positions.get(ticker, (0.0, 0.0))
+                    new_shares = t.get("shares", 0)
+                    new_price = t.get("price", 0)
+                    total_shares = prev_shares + new_shares
+                    if total_shares > 0:
+                        avg_price = (prev_cost + new_shares * new_price) / total_shares
+                    else:
+                        avg_price = new_price
+                    open_positions[ticker] = (total_shares, avg_price)
+                elif t.get("action") == "SELL":
+                    prev_shares, avg_buy = open_positions.get(ticker, (0.0, 0.0))
+                    sell_shares = min(t.get("shares", 0), prev_shares)
+                    if sell_shares > 0 and avg_buy > 0:
+                        pnl = (t.get("price", 0) - avg_buy) / avg_buy
+                        trade_returns.append(pnl)
+                        remaining = prev_shares - sell_shares
+                        open_positions[ticker] = (remaining, avg_buy) if remaining > 0 else (0.0, 0.0)
+
+            consec_losses = 0
+            max_cl = 0
+            total_profit = 0.0
+            total_loss = 0.0
+
+            for tr in trade_returns:
                 if tr < 0:
                     consec_losses += 1
                     max_cl = max(max_cl, consec_losses)

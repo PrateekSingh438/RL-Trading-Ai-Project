@@ -52,14 +52,14 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Try to restore session from backend
-    fetch("http://localhost:8000/api/v1/auth/me")
+    const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+    fetch(`${apiBase}/auth/me`)
       .then((r) => r.json())
       .then((d) => {
         if (d.data) {
           setUser(d.data);
-        } else {
-          setLoading(false);
         }
+        setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);

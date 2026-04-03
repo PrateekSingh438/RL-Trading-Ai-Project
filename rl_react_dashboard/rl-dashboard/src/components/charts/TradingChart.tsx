@@ -169,7 +169,8 @@ export default function TradingChart({
 
     const fetchData = async () => {
       try {
-        const res  = await fetch(`http://localhost:8000/api/v1/market/history/${symbol}`);
+        const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+        const res  = await fetch(`${apiBase}/market/history/${symbol}`);
         const json = await res.json();
         if (!active) return;
         if (json.data?.length > 0) {

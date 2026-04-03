@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 
-const API = "http://localhost:8000/api/v1";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
 
 type SortKey = "timestamp" | "symbol" | "action" | "price" | "confidence" | "pnl";
 type SortDir = "asc" | "desc";
@@ -416,9 +416,8 @@ export default function TradeHistoryPage() {
                   const pnl = t.pnl ?? 0;
                   const isPos = pnl > 0;
                   return (
-                    <>
+                    <Fragment key={id}>
                       <tr
-                        key={id}
                         className="hover:bg-neutral-50/50 dark:hover:bg-white/[0.015] transition-colors cursor-pointer"
                         onClick={() => setExpandedId(expanded ? null : id)}
                       >
@@ -490,8 +489,8 @@ export default function TradeHistoryPage() {
                           )}
                         </td>
                       </tr>
-                      {expanded && <ExpandedRow key={`${id}-exp`} trade={t} />}
-                    </>
+                      {expanded && <ExpandedRow trade={t} />}
+                    </Fragment>
                   );
                 })}
               </tbody>

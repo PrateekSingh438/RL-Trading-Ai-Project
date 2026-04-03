@@ -110,9 +110,19 @@ class WalkForwardBacktester:
                 obs = train_env.reset()
                 done = False
                 while not done:
-                    action, log_prob, value = agent.select_action(obs)
+                    # Support both EnsembleAgent (action, info) and PPOAgent (action, log_prob, value)
+                    result = agent.select_action(obs)
+                    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
+                        action = result[0]
+                        _, log_prob, value = agent.ppo.select_action(obs) if hasattr(agent, 'ppo') else (action, 0.0, 0.0)
+                    elif isinstance(result, tuple) and len(result) == 3:
+                        action, log_prob, value = result
+                    else:
+                        action = result if not isinstance(result, tuple) else result[0]
+                        log_prob, value = 0.0, 0.0
                     next_obs, reward, done, info = train_env.step(action)
-                    agent.store_transition(obs, action, reward, value, log_prob, done)
+                    agent.store_transition(obs, action, reward, next_obs, done,
+                                           value=value, log_prob=log_prob)
                     obs = next_obs
                 agent.train()
 
@@ -131,7 +141,8 @@ class WalkForwardBacktester:
             fold_values = [test_env.initial_capital]
 
             while not done:
-                action, _, _ = agent.select_action(obs, deterministic=True)
+                result = agent.select_action(obs, deterministic=True) if 'deterministic' in agent.select_action.__code__.co_varnames else agent.select_action(obs)
+                action = result[0] if isinstance(result, tuple) else result
                 obs, reward, done, info = test_env.step(action)
                 fold_values.append(info["portfolio_value"])
 

@@ -16,7 +16,7 @@ import { useState, useMemo, memo, useEffect, useRef } from "react";
 import { useUIStore, useNotificationStore } from "../store";
 import TradingChart from "../components/charts/TradingChart";
 
-const API = "http://localhost:8000/api/v1";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -988,8 +988,25 @@ function AgentCtrl() {
           <div className="h-1.5 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
             <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-300" style={{ width: `${tProgress}%` }} />
           </div>
-          <div className="flex justify-between text-[9px] text-neutral-400 tabular-nums mt-0.5">
-            <span>Training…</span><span>{tProgress}%</span>
+          <div className="flex items-center justify-between text-[9px] text-neutral-400 tabular-nums mt-1">
+            <span>Training…</span>
+            <div className="flex items-center gap-2">
+              <span>{tProgress}%</span>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch(`${API}/agents/control`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "abort_training" }),
+                    });
+                  } catch {}
+                }}
+                className="rounded px-1.5 py-0.5 text-[9px] font-bold text-red-500 hover:bg-red-500/10 border border-red-500/20 transition-all"
+              >
+                Abort
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -98,6 +98,7 @@ live_news_cache: List[dict] = []         # last N live headlines across all tick
 
 cached_data: dict = {"loaded": False, "train": None, "test": None, "tickers": None}
 trained_agent: dict = {"agent": None}
+training_abort = False  # Flag to abort training mid-loop
 
 _live_fetcher = LiveNewsFetcher(cache_ttl=55)    # 55-s cache for live news
 _news_gen     = NewsGenerator(seed=42)
@@ -329,7 +330,8 @@ def _refresh_live_news():
 # ─── Training ─────────────────────────────────────────────────────────────────
 
 def train_agent(n_episodes: int = 50):
-    global trained_agent
+    global trained_agent, training_abort
+    training_abort = False
     load_data()
     env = make_env(cached_data["train"])
     obs = env.reset()
@@ -342,11 +344,17 @@ def train_agent(n_episodes: int = 50):
     best = -float("inf")
 
     for ep in range(n_episodes):
+        if training_abort:
+            add_log("WARN", f"Training aborted at episode {ep+1}/{n_episodes}", "training")
+            break
+
         obs = env.reset()
         done = False
         er = 0.0
 
         while not done:
+            if training_abort:
+                break
             a, _ = agent.select_action(obs)
             no, r, done, info = env.step(a)
             _, lp, v = agent.ppo.select_action(obs)
@@ -369,7 +377,6 @@ def train_agent(n_episodes: int = 50):
                     "training")
 
         # Skip to next episode if this one had catastrophic drawdown
-        # (was break — which aborted the ENTIRE training loop, preventing the agent from learning)
         if p.get("max_drawdown", 0) > 0.50:
             add_log("WARN", f"Ep {ep+1}: max_drawdown > 50%, resetting for next episode", "training")
             continue
@@ -682,6 +689,11 @@ async def control(cmd: AgentCommand):
         agent_state["status"] = "stopped"
         add_log("INFO", "Agent stopped by user", "agent")
         return ok({"message": "Stopped"})
+    if cmd.action == "abort_training":
+        global training_abort
+        training_abort = True
+        add_log("INFO", "Training abort requested by user", "training")
+        return ok({"message": "Abort signal sent"})
     raise HTTPException(400, f"Unknown action: {cmd.action}")
 
 @app.get("/api/v1/portfolio/metrics")

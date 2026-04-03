@@ -12,7 +12,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { User, TradingProfile, AgentState, TradingMode } from "../types";
+import type { User, TradingProfile, AgentState } from "../types";
 
 // ─── Auth Store ───────────────────────────────────────────
 

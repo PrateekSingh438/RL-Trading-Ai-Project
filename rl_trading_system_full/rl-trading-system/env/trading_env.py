@@ -182,7 +182,7 @@ class TradingEnv:
             new_prices = self.price_data[self.current_step]
         else:
             new_prices = prices
-        self.portfolio_value = self.cash + np.sum(np.maximum(self.positions, 0) * new_prices)
+        self.portfolio_value = self.cash + np.sum(self.positions * new_prices)
         self.portfolio_value = max(self.portfolio_value, 0.0)  # hard floor
         self.portfolio_history.append(self.portfolio_value)
 
@@ -259,13 +259,16 @@ class TradingEnv:
             action = actions[i]
             price = prices[i]
 
+            if price <= 0:
+                continue
+
             # Long-only: positive action = buy, negative = reduce/sell existing position
             max_shares = (0.25 * effective_value) / (price + 1e-10)
             if action >= 0:
                 target_shares = action * max_shares
             else:
                 # Scale down to zero: action -1 = sell all, action 0 = hold
-                target_shares = max(0.0, self.positions[i] + action * self.positions[i])
+                target_shares = max(0.0, self.positions[i] * (1.0 + action))
 
             delta_shares = target_shares - self.positions[i]
 
@@ -283,6 +286,7 @@ class TradingEnv:
                 exec_price = price * (1 - self.slippage)
 
             if delta_shares > 0:
+                # BUYING: spend cash
                 cost = abs(delta_shares * exec_price) * self.transaction_cost
                 total_cost = delta_shares * exec_price + cost
                 available_cash = max(self.cash, 0.0)
@@ -290,14 +294,20 @@ class TradingEnv:
                     delta_shares = available_cash / (exec_price * (1 + self.transaction_cost) + 1e-10)
                     delta_shares = max(0.0, delta_shares)
                     cost = delta_shares * exec_price * self.transaction_cost
+                # Deduct cost from cash
+                self.cash -= (delta_shares * exec_price + cost)
             else:
-                cost = abs(delta_shares * exec_price) * self.transaction_cost
+                # SELLING: receive cash proceeds minus transaction cost
+                sell_shares = abs(delta_shares)
+                proceeds = sell_shares * exec_price
+                cost = proceeds * self.transaction_cost
+                # Add net proceeds to cash
+                self.cash += (proceeds - cost)
 
             if abs(delta_shares) < 0.001:
                 continue
 
-            self.cash -= delta_shares * exec_price + cost
-            self.cash = max(self.cash, 0.0)  # cash never goes negative in long-only mode
+            self.cash = max(self.cash, 0.0)  # safety floor
             self.positions[i] += delta_shares
             self.positions[i] = max(self.positions[i], 0.0)  # safety clamp
 

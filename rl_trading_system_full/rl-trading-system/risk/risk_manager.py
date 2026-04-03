@@ -307,8 +307,8 @@ class RiskManager:
                 actions[i] *= 0.1
 
         # 4. Apply position constraints
-        # Use abs value so a negative portfolio_value doesn't flip action signs
-        effective_value = max(abs(portfolio_value), 1.0)
+        # Clamp to 1.0 minimum — portfolio should never be negative, but guard anyway
+        effective_value = max(portfolio_value, 1.0)
         target_positions = actions * (effective_value / (current_prices + 1e-10))
         constrained = self.position_sizer.apply_constraints(
             target_positions, effective_value, current_prices

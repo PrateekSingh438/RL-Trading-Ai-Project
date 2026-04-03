@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../store";
+import { setAccessToken } from "../services/api";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("demo@trader.com");
@@ -17,14 +18,18 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+      const res = await fetch(`${apiBase}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
       if (res.ok) {
-        setUser(data.data.user);
+        if (data.data?.accessToken) {
+          setAccessToken(data.data.accessToken);
+        }
+        setUser(data.data?.user ?? data.data);
         navigate("/dashboard");
       } else {
         setError(data.detail || "Login failed");
