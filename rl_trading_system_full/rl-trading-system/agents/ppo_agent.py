@@ -76,15 +76,18 @@ if HAS_TORCH:
                 return action.cpu().numpy(), log_prob.item(), value.item()
 
         def evaluate_actions(self, obs_batch, actions_batch):
-            """Used during PPO update to recompute log_probs and values."""
+            """Used during PPO update to recompute log_probs and values.
+            Batched: single LSTM forward pass instead of per-sample loop."""
             device = next(self.parameters()).device
-            means, values, _ = [], [], []
-            for obs in obs_batch:
-                m, v, _ = self.forward(torch.FloatTensor(obs).to(device))
-                means.append(m)
-                values.append(v)
-            means = torch.stack(means)
-            values = torch.stack(values).squeeze(-1)
+            # Stack all observations into (batch, 1, obs_dim) for batched LSTM
+            obs_t = torch.FloatTensor(np.array(obs_batch)).to(device)
+            if obs_t.dim() == 2:
+                obs_t = obs_t.unsqueeze(1)  # (batch, 1, obs_dim)
+            lstm_out, _ = self.lstm(obs_t)
+            features = lstm_out[:, -1, :]  # (batch, lstm_hidden)
+            means = self.actor_head(features)  # (batch, action_dim)
+            values = self.critic_head(features).squeeze(-1)  # (batch,)
+
             std = torch.exp(self.log_std.clamp(-3, 1))
             dist = Normal(means, std)
             actions_t = torch.FloatTensor(np.array(actions_batch)).to(device)

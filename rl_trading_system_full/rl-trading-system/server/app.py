@@ -382,37 +382,57 @@ def train_agent(n_episodes: int = 50):
     agent_state.update({"training_status": "training", "n_episodes": n_episodes})
     best = -float("inf")
 
+    import time as _time
+    t_start = _time.perf_counter()
+
     for ep in range(n_episodes):
         if training_abort:
             add_log("WARN", f"Training aborted at episode {ep+1}/{n_episodes}", "training")
             break
 
+        ep_start = _time.perf_counter()
         obs = env.reset()
         done = False
         er = 0.0
+        step_count = 0
 
         while not done:
             if training_abort:
                 break
-            a, _ = agent.select_action(obs)
+            # select_action already runs PPO internally — reuse its results
+            a, dec = agent.select_action(obs)
             no, r, done, info = env.step(a)
-            _, lp, v = agent.ppo.select_action(obs)
+            lp = dec.get("ppo_log_prob", 0.0)
+            v = dec.get("ppo_value", 0.0)
             agent.store_transition(obs, a, r, no, done, value=v, log_prob=lp)
             er += r
             obs = no
+            step_count += 1
 
-        agent.train()
+            # Train SAC every 4 steps instead of every step (4x speedup)
+            if step_count % 4 == 0:
+                agent.sac.train()
+
+        # Train PPO at end of episode (on-policy)
+        agent.ppo.train()
+        agent._update_weights()
+
         p = env.get_performance_summary()
         if er > best:
             best = er
         agent_state["training_progress"] = int((ep + 1) / n_episodes * 100)
 
+        ep_time = _time.perf_counter() - ep_start
         if (ep + 1) % max(1, n_episodes // 10) == 0 or ep == 0:
+            elapsed = _time.perf_counter() - t_start
+            eps_per_sec = (ep + 1) / elapsed if elapsed > 0 else 0
+            eta = (n_episodes - ep - 1) / eps_per_sec if eps_per_sec > 0 else 0
             add_log("INFO",
                     f"Ep {ep+1}/{n_episodes} | Reward: {er:.0f} | "
                     f"Ret: {p.get('total_return',0):.2%} | "
                     f"Sharpe: {p.get('sharpe_ratio',0):.3f} | "
-                    f"MaxDD: {p.get('max_drawdown',0):.2%}",
+                    f"MaxDD: {p.get('max_drawdown',0):.2%} | "
+                    f"{ep_time:.1f}s/ep | ETA: {eta:.0f}s",
                     "training")
 
         # Skip to next episode if this one had catastrophic drawdown
@@ -420,9 +440,10 @@ def train_agent(n_episodes: int = 50):
             add_log("WARN", f"Ep {ep+1}: max_drawdown > 50%, resetting for next episode", "training")
             continue
 
+    total_time = _time.perf_counter() - t_start
     trained_agent["agent"] = agent
     agent_state.update({"training_status": "trained", "training_progress": 100})
-    add_log("INFO", f"Training complete — best reward: {best:.0f}", "training")
+    add_log("INFO", f"Training complete — best reward: {best:.0f} | Total: {total_time:.1f}s", "training")
 
 
 # ─── Engine (paper trading loop) ─────────────────────────────────────────────

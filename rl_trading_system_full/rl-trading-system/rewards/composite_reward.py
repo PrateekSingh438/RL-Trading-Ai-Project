@@ -275,9 +275,17 @@ class CompositeReward:
         if len(portfolio_history) < 5:
             return float(np.tanh(portfolio_return * 50.0))
 
+        # Use rolling window (last 60 days) to keep reward computation O(1)
+        # instead of O(T) which gets slower every step
+        window = 60
+        p_hist = portfolio_history[-window:] if len(portfolio_history) > window else portfolio_history
+        b_hist = benchmark_history[-window:] if len(benchmark_history) > window else benchmark_history
+        if len(b_hist) != len(p_hist):
+            b_hist = benchmark_history[-len(p_hist):] if len(benchmark_history) >= len(p_hist) else np.zeros(len(p_hist))
+
         components = self.compute(
-            portfolio_history,
-            benchmark_history,
+            p_hist,
+            b_hist,
             current_drawdown=current_drawdown,
             positions=positions,
             regime=regime,
