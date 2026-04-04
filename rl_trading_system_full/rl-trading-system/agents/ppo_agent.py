@@ -162,6 +162,19 @@ class PPOAgent:
             self.network = ActorCriticNetwork(obs_dim, action_dim, hidden_dim, lstm_hidden_dim, num_lstm_layers)
             self.lr = learning_rate
 
+    def to_device(self, device_str: str):
+        """Move network + optimizer to a new device (cpu/cuda). Call after CONFIG change."""
+        if not HAS_TORCH:
+            return
+        new_device = torch.device(device_str)
+        if new_device == self.device:
+            return
+        self.device = new_device
+        self.network.to(self.device)
+        # Rebuild optimizer so its internal state tensors are on the correct device
+        lr = self.optimizer.param_groups[0]["lr"]
+        self.optimizer = optim.Adam(self.network.parameters(), lr=lr, eps=1e-5)
+
     def select_action(self, obs, deterministic=False):
         if HAS_TORCH:
             return self.network.get_action(obs, deterministic)
@@ -271,8 +284,9 @@ class PPOAgent:
 
     def load(self, path):
         if HAS_TORCH:
-            ckpt = torch.load(path, map_location="cpu")
+            ckpt = torch.load(path, map_location=self.device)
             self.network.load_state_dict(ckpt["model"])
+            self.network.to(self.device)
             self.optimizer.load_state_dict(ckpt["optimizer"])
             self.total_steps = ckpt["steps"]
             self.episodes = ckpt["episodes"]

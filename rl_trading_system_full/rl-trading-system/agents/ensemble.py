@@ -180,6 +180,11 @@ class EnsembleAgent:
 
         return info
 
+    def to_device(self, device_str: str):
+        """Move PPO network to a new device. SAC is NumPy-only, no move needed."""
+        if hasattr(self.ppo, "to_device"):
+            self.ppo.to_device(device_str)
+
     def save(self, ppo_path: str, sac_path: str):
         self.ppo.save(ppo_path)
         self.sac.save(sac_path)

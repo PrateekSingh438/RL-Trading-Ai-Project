@@ -376,9 +376,16 @@ def train_agent(n_episodes: int = 50):
     obs = env.reset()
     agent = EnsembleAgent(obs_dim=len(obs), action_dim=env.action_dim)
 
+    # Log actual device being used
+    _actual_device = "cpu"
+    if _has_torch():
+        import torch
+        _actual_device = CONFIG.training.device if torch.cuda.is_available() and CONFIG.training.device == "cuda" else "cpu"
+        if hasattr(agent, "ppo") and hasattr(agent.ppo, "device"):
+            _actual_device = str(agent.ppo.device)
     add_log("INFO",
             f"Training {n_episodes} episodes | PyTorch: {_has_torch()} | "
-            f"obs_dim={len(obs)} action_dim={env.action_dim}", "training")
+            f"Device: {_actual_device} | obs_dim={len(obs)} action_dim={env.action_dim}", "training")
     agent_state.update({"training_status": "training", "n_episodes": n_episodes})
     best = -float("inf")
 
@@ -1023,28 +1030,38 @@ async def set_device(body: dict):
         info = _gpu_info()
         if not info["available"]:
             raise HTTPException(400, info["error"] or "CUDA GPU not available")
-        # Move existing PyTorch models to GPU
-        try:
-            import torch
-            if trained_agent["agent"] and hasattr(trained_agent["agent"], "ppo"):
-                ppo = trained_agent["agent"].ppo
-                if hasattr(ppo, "network") and hasattr(ppo.network, "to"):
-                    ppo.network.to(torch.device("cuda"))
-            add_log("INFO", f"Switched to GPU: {info['name']}", "system")
-        except Exception as e:
-            raise HTTPException(500, f"Failed to move models to GPU: {e}")
-    else:
-        try:
-            import torch
-            if trained_agent["agent"] and hasattr(trained_agent["agent"], "ppo"):
-                ppo = trained_agent["agent"].ppo
-                if hasattr(ppo, "network") and hasattr(ppo.network, "to"):
-                    ppo.network.to(torch.device("cpu"))
-            add_log("INFO", "Switched to CPU", "system")
-        except Exception:
-            pass
 
+    # Update config FIRST so any new agent creation picks it up
     CONFIG.training.device = requested
+
+    try:
+        import torch
+        target_dev = torch.device(requested)
+
+        # Move ensemble agent (PPO network + optimizer)
+        agent = trained_agent.get("agent")
+        if agent and hasattr(agent, "to_device"):
+            agent.to_device(requested)
+
+        # Move FinBERT model if loaded
+        try:
+            from sentiment.analyzer import FinBERTAnalyzer
+            fb = FinBERTAnalyzer()
+            if fb._model is not None:
+                fb._model.to(target_dev)
+                fb._device = target_dev
+        except Exception:
+            pass  # FinBERT may not be loaded yet, that's fine
+
+        label = f"GPU: {_gpu_info().get('name', 'CUDA')}" if requested == "cuda" else "CPU"
+        add_log("INFO", f"Switched to {label}", "system")
+    except ImportError:
+        raise HTTPException(500, "PyTorch not installed")
+    except Exception as e:
+        # Rollback config on failure
+        CONFIG.training.device = "cpu"
+        raise HTTPException(500, f"Failed to switch device: {e}")
+
     return ok(_gpu_info())
 
 

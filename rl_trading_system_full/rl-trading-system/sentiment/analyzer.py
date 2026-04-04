@@ -71,6 +71,7 @@ class FinBERTAnalyzer:
             cls._instance._pos_idx    = None
             cls._instance._neg_idx    = None
             cls._instance._available  = None   # None = not yet tried
+            cls._instance._device     = None   # torch.device
         return cls._instance
 
     def _load(self) -> bool:
@@ -79,11 +80,16 @@ class FinBERTAnalyzer:
             return self._available
         try:
             from transformers import AutoTokenizer, AutoModelForSequenceClassification
-            import torch  # noqa: F401
+            import torch
+            from config.settings import CONFIG
             model_id = "ProsusAI/finbert"
             self._tokenizer = AutoTokenizer.from_pretrained(model_id)
             self._model = AutoModelForSequenceClassification.from_pretrained(model_id)
             self._model.eval()
+            # Move to configured device
+            dev_str = CONFIG.training.device if torch.cuda.is_available() and CONFIG.training.device == "cuda" else "cpu"
+            self._device = torch.device(dev_str)
+            self._model.to(self._device)
             # Build label lookup
             self._label_map = {
                 idx: lbl.lower()
@@ -93,7 +99,7 @@ class FinBERTAnalyzer:
             self._pos_idx = inv.get("positive", 0)
             self._neg_idx = inv.get("negative", 1)
             self._available = True
-            print("[FinBERT] Model loaded successfully.")
+            print(f"[FinBERT] Model loaded successfully on {self._device}.")
         except Exception as e:
             print(f"[FinBERT] Not available ({e}); using keyword fallback.")
             self._available = False
@@ -120,9 +126,11 @@ class FinBERTAnalyzer:
                     max_length=512,
                     padding=True,
                 )
+                # Move tokenized inputs to same device as model
+                inputs = {k: v.to(self._device) for k, v in inputs.items()}
                 with torch.no_grad():
                     logits = self._model(**inputs).logits
-                probs = torch.softmax(logits, dim=-1).numpy()
+                probs = torch.softmax(logits, dim=-1).cpu().numpy()
                 for p in probs:
                     pred_idx  = int(p.argmax())
                     sentiment = self._label_map[pred_idx]
