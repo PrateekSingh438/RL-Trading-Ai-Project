@@ -19,5 +19,9 @@ transformers>=4.40.0
 # Free key at: console.groq.com — add to .env as GROQ_API_KEY=gsk_...
 groq>=0.9.0
 
+# ─── System monitoring (CPU/GPU utilization on dashboard) ─────────────────────
+psutil>=5.9.0
+nvidia-ml-py>=12.0.0     # NVIDIA GPU stats; optional — falls back to torch.cuda
+
 # ─── Optional: visualization ──────────────────────────────────────────────────
 matplotlib>=3.7.0

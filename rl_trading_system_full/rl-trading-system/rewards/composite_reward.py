@@ -170,10 +170,10 @@ class CompositeReward:
            30 % DD  → 2.88  (approaching clip_range)
         """
         dd = abs(current_drawdown)
-        if dd < 0.03:   # ignore micro-fluctuations
+        if dd < self.drawdown_hard_threshold:
             return 0.0
         # Quadratic growth above threshold, scaled by drawdown_penalty_scale
-        excess = max(0.0, dd - 0.03)
+        excess = max(0.0, dd - self.drawdown_hard_threshold)
         penalty = (excess ** 2) * self.drawdown_penalty_scale * 80.0
         return float(min(penalty, self.clip_range))
 

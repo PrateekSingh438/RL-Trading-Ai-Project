@@ -125,6 +125,10 @@ class EnsembleAgent:
         # SAC (off-policy)
         self.sac.store_transition(obs, action, reward, next_obs, done)
 
+        # Track per-agent rewards for adaptive weighting
+        self.ppo_rewards.append(reward)
+        self.sac_rewards.append(reward)
+
     def train(self) -> Dict[str, float]:
         """Train both agents and update weights."""
         ppo_stats = self.ppo.train()

@@ -1014,6 +1014,94 @@ function AgentCtrl() {
   );
 }
 
+// ─── CPU / GPU utilization bar ───────────────────────────────────────────────
+
+interface UtilData {
+  cpu_percent: number; cpu_count: number;
+  ram_percent: number; ram_used_mb: number; ram_total_mb: number;
+  gpu_utilization: number; gpu_memory_percent: number;
+  gpu_memory_used_mb: number; gpu_memory_total_mb: number;
+  gpu_name: string | null; gpu_available: boolean; device: string;
+}
+
+function UtilBar({ label, pct, color, detail }: { label: string; pct: number; color: string; detail: string }) {
+  const clamped = Math.min(Math.max(pct, 0), 100);
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-400 w-8 shrink-0">{label}</span>
+      <div className="flex-1 h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden min-w-[60px]">
+        <div className={cn("h-full rounded-full transition-all duration-700", color)} style={{ width: `${clamped}%` }} />
+      </div>
+      <span className="text-[10px] font-semibold tabular-nums text-neutral-600 dark:text-neutral-300 w-9 text-right shrink-0">{clamped.toFixed(0)}%</span>
+      <span className="text-[9px] text-neutral-400 tabular-nums truncate hidden sm:inline">{detail}</span>
+    </div>
+  );
+}
+
+function UtilizationStatusBar() {
+  const [util, setUtil] = useState<UtilData | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      try {
+        const r = await fetch(`${API}/system/utilization`);
+        const d = await r.json();
+        if (alive && d.data) setUtil(d.data);
+      } catch {}
+    };
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  if (!util) return null;
+
+  const cpuColor = util.cpu_percent > 80 ? "bg-red-500" : util.cpu_percent > 50 ? "bg-amber-500" : "bg-sky-500";
+  const ramColor = util.ram_percent > 85 ? "bg-red-500" : util.ram_percent > 60 ? "bg-amber-500" : "bg-violet-500";
+  const gpuColor = util.gpu_utilization > 80 ? "bg-emerald-500" : util.gpu_utilization > 40 ? "bg-amber-500" : "bg-neutral-400";
+  const vramColor = util.gpu_memory_percent > 85 ? "bg-red-500" : util.gpu_memory_percent > 50 ? "bg-amber-500" : "bg-teal-500";
+
+  return (
+    <div className="rounded-xl bg-white dark:bg-neutral-900/80 border border-neutral-200/60 dark:border-neutral-800/60 px-4 py-2.5 overflow-hidden relative">
+      <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-sky-500 via-violet-500 to-emerald-500" />
+      <div className="flex items-center gap-3 mb-2">
+        <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+          <rect x="4" y="4" width="16" height="16" rx="2"/><line x1="9" y1="8" x2="9" y2="16"/><line x1="15" y1="12" x2="15" y2="16"/>
+        </svg>
+        <span className="text-[10px] uppercase tracking-widest text-neutral-400 font-semibold">System Utilization</span>
+        <div className={cn("ml-auto flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider border",
+          util.device === "cuda"
+            ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-600 dark:text-emerald-400"
+            : "bg-sky-500/10 border-sky-500/25 text-sky-600 dark:text-sky-400"
+        )}>
+          <span className={cn("h-1.5 w-1.5 rounded-full", util.device === "cuda" ? "bg-emerald-400" : "bg-sky-400")} />
+          {util.device === "cuda" ? "GPU" : "CPU"} Mode
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+        <UtilBar label="CPU" pct={util.cpu_percent} color={cpuColor}
+          detail={`${util.cpu_count} cores`} />
+        <UtilBar label="RAM" pct={util.ram_percent} color={ramColor}
+          detail={`${(util.ram_used_mb / 1024).toFixed(1)} / ${(util.ram_total_mb / 1024).toFixed(1)} GB`} />
+        {util.gpu_available ? (
+          <>
+            <UtilBar label="GPU" pct={util.gpu_utilization} color={gpuColor}
+              detail={util.gpu_name ?? "CUDA"} />
+            <UtilBar label="VRAM" pct={util.gpu_memory_percent} color={vramColor}
+              detail={`${(util.gpu_memory_used_mb / 1024).toFixed(1)} / ${(util.gpu_memory_total_mb / 1024).toFixed(1)} GB`} />
+          </>
+        ) : (
+          <div className="sm:col-span-1 flex items-center gap-2">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-neutral-400 w-8 shrink-0">GPU</span>
+            <span className="text-[10px] text-neutral-400 italic">No GPU detected</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 type SideTab = "signals" | "positions" | "sentiment" | "news" | "importance";
@@ -1182,6 +1270,9 @@ export default function DashboardPage() {
           accent="purple"
           icon={<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24"><path d="m3 7 5 5-5 5"/><path d="m21 17-5-5 5-5"/><line x1="9" y1="12" x2="15" y2="12"/></svg>} />
       </div>
+
+      {/* ── CPU / GPU utilization ──────────────────────────── */}
+      <UtilizationStatusBar />
 
       {/* ── Main grid ───────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

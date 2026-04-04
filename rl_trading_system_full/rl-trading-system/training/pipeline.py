@@ -226,11 +226,9 @@ class TrainingPipeline:
                 # Step environment
                 next_obs, reward, done, info = self.train_env.step(action)
 
-                # Store transition — get log_prob/value from the PPO sub-agent
-                if hasattr(self.agent, 'ppo'):
-                    _, log_prob, value = self.agent.ppo.select_action(obs)
-                else:
-                    log_prob, value = 0.0, 0.0
+                # Reuse log_prob/value from ensemble's select_action (PPO already ran)
+                log_prob = decision_info.get("ppo_log_prob", 0.0)
+                value = decision_info.get("ppo_value", 0.0)
                 self.agent.store_transition(
                     obs, action, reward, next_obs, done,
                     value=value, log_prob=log_prob

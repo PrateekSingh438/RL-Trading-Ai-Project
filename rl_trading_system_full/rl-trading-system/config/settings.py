@@ -57,7 +57,7 @@ class PPOConfig:
     entropy_coef: float = 0.01
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
-    n_epochs: int = 4  # reduced from 10 (faster training, still converges)
+    n_epochs: int = 10
     batch_size: int = 64
     n_steps: int = 2048
     hidden_dim: int = 256
@@ -73,12 +73,12 @@ class SACConfig:
     tau: float = 0.005  # Soft update coefficient
     alpha: float = 0.2  # Temperature parameter
     auto_alpha: bool = True  # Automatic entropy tuning
-    batch_size: int = 64  # reduced from 256 (SAC is NumPy, per-sample loop)
-    buffer_size: int = 100_000  # reduced from 1M (faster sampling)
+    batch_size: int = 256
+    buffer_size: int = 1_000_000
     hidden_dim: int = 256
     lstm_hidden_dim: int = 128
     num_lstm_layers: int = 2
-    learning_starts: int = 200  # reduced from 1000 (start learning sooner)
+    learning_starts: int = 1000
 
 
 @dataclass

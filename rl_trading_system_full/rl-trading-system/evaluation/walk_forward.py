@@ -113,8 +113,11 @@ class WalkForwardBacktester:
                     # Support both EnsembleAgent (action, info) and PPOAgent (action, log_prob, value)
                     result = agent.select_action(obs)
                     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
+                        # EnsembleAgent: reuse PPO values from decision_info
                         action = result[0]
-                        _, log_prob, value = agent.ppo.select_action(obs) if hasattr(agent, 'ppo') else (action, 0.0, 0.0)
+                        dec = result[1]
+                        log_prob = dec.get("ppo_log_prob", 0.0)
+                        value = dec.get("ppo_value", 0.0)
                     elif isinstance(result, tuple) and len(result) == 3:
                         action, log_prob, value = result
                     else:

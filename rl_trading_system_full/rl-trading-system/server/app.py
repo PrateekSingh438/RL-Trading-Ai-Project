@@ -416,9 +416,8 @@ def train_agent(n_episodes: int = 50):
             obs = no
             step_count += 1
 
-            # Train SAC every 4 steps instead of every step (4x speedup)
-            if step_count % 4 == 0:
-                agent.sac.train()
+            # Train SAC every step (off-policy, maximizes CPU/GPU utilization)
+            agent.sac.train()
 
         # Train PPO at end of episode (on-policy)
         agent.ppo.train()
@@ -515,10 +514,11 @@ def run_engine():
                 "timestamp":        time.time() * 1000,
             })
             risk_detail = {
-                "var_95":           getattr(rm, "value_at_risk_95", 0) if rm else 0,
-                "cvar_95":          getattr(rm, "cvar_95", 0) if rm else 0,
-                "max_leverage":     getattr(rm, "max_leverage", 1.0) if rm else 1.0,
+                "var_95":           getattr(rm, "var_95", 0) if rm else 0,
+                "peak_value":       getattr(rm, "peak_value", 0) if rm else 0,
+                "portfolio_volatility": getattr(rm, "portfolio_volatility", 0) if rm else 0,
                 "is_halted":        getattr(rm, "is_trading_halted", False) if rm else False,
+                "halt_reason":      getattr(rm, "halt_reason", "") if rm else "",
             }
 
             equity_curve.append({
@@ -1012,6 +1012,55 @@ async def sentiment_status():
         "model": "ProsusAI/finbert" if available else None,
         "scorer": "finbert" if available else "keyword",
     })
+
+@app.get("/api/v1/system/utilization")
+async def system_utilization():
+    """Return CPU and GPU utilization percentages."""
+    result = {"cpu_percent": 0, "cpu_count": 1, "ram_percent": 0, "ram_used_mb": 0, "ram_total_mb": 0,
+              "gpu_utilization": 0, "gpu_memory_percent": 0, "gpu_memory_used_mb": 0, "gpu_memory_total_mb": 0,
+              "gpu_name": None, "gpu_available": False, "device": CONFIG.training.device}
+    # CPU / RAM via psutil
+    try:
+        import psutil
+        result["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+        result["cpu_count"] = psutil.cpu_count(logical=True) or 1
+        mem = psutil.virtual_memory()
+        result["ram_percent"] = mem.percent
+        result["ram_used_mb"] = round(mem.used / 1024 / 1024)
+        result["ram_total_mb"] = round(mem.total / 1024 / 1024)
+    except ImportError:
+        pass
+    # GPU via pynvml (works even without PyTorch)
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        result["gpu_available"] = True
+        result["gpu_name"] = pynvml.nvmlDeviceGetName(handle)
+        if isinstance(result["gpu_name"], bytes):
+            result["gpu_name"] = result["gpu_name"].decode()
+        result["gpu_utilization"] = util.gpu
+        result["gpu_memory_percent"] = round(mem_info.used / mem_info.total * 100, 1) if mem_info.total else 0
+        result["gpu_memory_used_mb"] = round(mem_info.used / 1024 / 1024)
+        result["gpu_memory_total_mb"] = round(mem_info.total / 1024 / 1024)
+        pynvml.nvmlShutdown()
+    except Exception:
+        # Fallback: try torch.cuda
+        try:
+            import torch
+            if torch.cuda.is_available():
+                result["gpu_available"] = True
+                result["gpu_name"] = torch.cuda.get_device_name(0)
+                result["gpu_memory_total_mb"] = round(torch.cuda.get_device_properties(0).total_mem / 1024 / 1024)
+                result["gpu_memory_used_mb"] = round(torch.cuda.memory_allocated(0) / 1024 / 1024)
+                total = torch.cuda.get_device_properties(0).total_mem
+                result["gpu_memory_percent"] = round(torch.cuda.memory_allocated(0) / total * 100, 1) if total else 0
+        except Exception:
+            pass
+    return ok(result)
+
 
 @app.get("/api/v1/device")
 async def get_device():

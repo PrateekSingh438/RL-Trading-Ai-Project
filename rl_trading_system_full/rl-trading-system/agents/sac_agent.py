@@ -150,14 +150,12 @@ class SACAgent:
         return stats
 
     def _update_critics(self, batch: Dict) -> float:
-        """Update Q-networks using mini-batch (subsample for speed)."""
+        """Update Q-networks using full mini-batch."""
         total_loss = 0
-        # Subsample to max 32 items to keep per-step cost bounded
         n = len(batch["observations"])
-        indices = np.random.choice(n, min(n, 32), replace=False) if n > 32 else range(n)
         count = 0
 
-        for i in indices:
+        for i in range(n):
             obs = batch["observations"][i]
             action = batch["actions"][i]
             reward = batch["rewards"][i]
@@ -186,13 +184,12 @@ class SACAgent:
         return total_loss / max(count, 1)
 
     def _update_actor(self, batch: Dict) -> float:
-        """Update policy network (subsampled for speed)."""
+        """Update policy network using full mini-batch."""
         total_loss = 0
         n = len(batch["observations"])
-        indices = np.random.choice(n, min(n, 32), replace=False) if n > 32 else range(n)
         count = 0
 
-        for i in indices:
+        for i in range(n):
             obs = batch["observations"][i]
             action, log_prob, _ = self.actor.get_action(obs)
             q1_val = self.q1.forward(obs, action)
@@ -213,13 +210,12 @@ class SACAgent:
         return total_loss / max(count, 1)
 
     def _update_alpha(self, batch: Dict):
-        """Update temperature parameter (subsampled for speed)."""
+        """Update temperature parameter."""
         n = len(batch["observations"])
-        indices = np.random.choice(n, min(n, 16), replace=False) if n > 16 else range(n)
         total_entropy = 0
         count = 0
 
-        for i in indices:
+        for i in range(n):
             _, log_prob, _ = self.actor.get_action(batch["observations"][i])
             total_entropy += -log_prob
             count += 1

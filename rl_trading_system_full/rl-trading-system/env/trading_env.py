@@ -78,8 +78,13 @@ class TradingEnv:
             transaction_cost=transaction_cost
         )
 
-        # Regime detector
-        self.regime_detector = RegimeDetector(method="rules")
+        # Regime detector — use config if available, else default to rules
+        try:
+            from config.settings import CONFIG
+            regime_method = CONFIG.regime.method
+        except Exception:
+            regime_method = "rules"
+        self.regime_detector = RegimeDetector(method=regime_method)
 
         # Spaces
         n_features = stock_data.shape[2] if len(stock_data.shape) == 3 else stock_data.shape[1]
