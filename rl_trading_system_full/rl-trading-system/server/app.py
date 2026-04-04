@@ -87,7 +87,7 @@ profile_data = {
 agent_state = {
     "id": "agent_1", "model": "ensemble", "status": "stopped", "mode": "paper",
     "uptime": 0, "total_signals": 0, "training_status": "not_trained",
-    "training_progress": 0, "n_episodes": 50,
+    "training_progress": 0, "n_episodes": 20,
 }
 portfolio_metrics: dict = {
     "portfolio_value": 1_000_000, "cash": 1_000_000,
@@ -416,8 +416,11 @@ def train_agent(n_episodes: int = 50):
             obs = no
             step_count += 1
 
-            # Train SAC every step (off-policy, maximizes CPU/GPU utilization)
-            agent.sac.train()
+            # Train SAC every 4 steps — SAC uses a per-sample NumPy loop,
+            # so batch=64 × ~2300 LSTM passes per call is expensive.
+            # Every-4-steps is standard for off-policy and keeps training responsive.
+            if step_count % 4 == 0:
+                agent.sac.train()
 
         # Train PPO at end of episode (on-policy)
         agent.ppo.train()
@@ -429,17 +432,16 @@ def train_agent(n_episodes: int = 50):
         agent_state["training_progress"] = int((ep + 1) / n_episodes * 100)
 
         ep_time = _time.perf_counter() - ep_start
-        if (ep + 1) % max(1, n_episodes // 10) == 0 or ep == 0:
-            elapsed = _time.perf_counter() - t_start
-            eps_per_sec = (ep + 1) / elapsed if elapsed > 0 else 0
-            eta = (n_episodes - ep - 1) / eps_per_sec if eps_per_sec > 0 else 0
-            add_log("INFO",
-                    f"Ep {ep+1}/{n_episodes} | Reward: {er:.0f} | "
-                    f"Ret: {p.get('total_return',0):.2%} | "
-                    f"Sharpe: {p.get('sharpe_ratio',0):.3f} | "
-                    f"MaxDD: {p.get('max_drawdown',0):.2%} | "
-                    f"{ep_time:.1f}s/ep | ETA: {eta:.0f}s",
-                    "training")
+        elapsed = _time.perf_counter() - t_start
+        eps_per_sec = (ep + 1) / elapsed if elapsed > 0 else 0
+        eta = (n_episodes - ep - 1) / eps_per_sec if eps_per_sec > 0 else 0
+        add_log("INFO",
+                f"Ep {ep+1}/{n_episodes} | Reward: {er:.0f} | "
+                f"Ret: {p.get('total_return',0):.2%} | "
+                f"Sharpe: {p.get('sharpe_ratio',0):.3f} | "
+                f"MaxDD: {p.get('max_drawdown',0):.2%} | "
+                f"{ep_time:.1f}s/ep | ETA: {eta:.0f}s",
+                "training")
 
         # Skip to next episode if this one had catastrophic drawdown
         if p.get("max_drawdown", 0) > 0.50:

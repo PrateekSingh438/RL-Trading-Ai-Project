@@ -149,13 +149,21 @@ class SACAgent:
 
         return stats
 
+    # Per-sample NumPy LSTM forward passes are expensive (~5 network forwards
+    # per critic sample, ~3 per actor sample).  We subsample the batch to keep
+    # wall-clock cost bounded while still providing gradient signal.
+    _CRITIC_SUBSAMPLE = 16
+    _ACTOR_SUBSAMPLE  = 16
+    _ALPHA_SUBSAMPLE  = 8
+
     def _update_critics(self, batch: Dict) -> float:
-        """Update Q-networks using full mini-batch."""
+        """Update Q-networks (subsampled for speed — NumPy LSTM is per-sample)."""
         total_loss = 0
         n = len(batch["observations"])
-        count = 0
+        k = min(n, self._CRITIC_SUBSAMPLE)
+        indices = np.random.choice(n, k, replace=False)
 
-        for i in range(n):
+        for i in indices:
             obs = batch["observations"][i]
             action = batch["actions"][i]
             reward = batch["rewards"][i]
@@ -175,21 +183,21 @@ class SACAgent:
 
             loss = (q1_val - target) ** 2 + (q2_val - target) ** 2
             total_loss += loss
-            count += 1
 
             # Update Q-network weights
             self._update_q_weights(self.q1, obs, action, target, q1_val)
             self._update_q_weights(self.q2, obs, action, target, q2_val)
 
-        return total_loss / max(count, 1)
+        return total_loss / max(k, 1)
 
     def _update_actor(self, batch: Dict) -> float:
-        """Update policy network using full mini-batch."""
+        """Update policy network (subsampled — NumPy LSTM is per-sample)."""
         total_loss = 0
         n = len(batch["observations"])
-        count = 0
+        k = min(n, self._ACTOR_SUBSAMPLE)
+        indices = np.random.choice(n, k, replace=False)
 
-        for i in range(n):
+        for i in indices:
             obs = batch["observations"][i]
             action, log_prob, _ = self.actor.get_action(obs)
             q1_val = self.q1.forward(obs, action)
@@ -199,7 +207,6 @@ class SACAgent:
             # Actor loss: minimize α*log_π - Q
             actor_loss = self.alpha * log_prob - min_q
             total_loss += actor_loss
-            count += 1
 
             # Update actor weights
             noise_scale = self.lr * 0.01
@@ -207,20 +214,20 @@ class SACAgent:
                 noise = np.random.randn(*w.shape) * noise_scale
                 self.actor.actor.weights[j] -= actor_loss * noise
 
-        return total_loss / max(count, 1)
+        return total_loss / max(k, 1)
 
     def _update_alpha(self, batch: Dict):
-        """Update temperature parameter."""
+        """Update temperature parameter (subsampled)."""
         n = len(batch["observations"])
+        k = min(n, self._ALPHA_SUBSAMPLE)
+        indices = np.random.choice(n, k, replace=False)
         total_entropy = 0
-        count = 0
 
-        for i in range(n):
+        for i in indices:
             _, log_prob, _ = self.actor.get_action(batch["observations"][i])
             total_entropy += -log_prob
-            count += 1
 
-        avg_entropy = total_entropy / max(count, 1)
+        avg_entropy = total_entropy / max(k, 1)
         alpha_loss = -self.log_alpha * (avg_entropy - self.target_entropy)
         self.log_alpha -= self.lr * 0.01 * np.sign(alpha_loss)
         self.alpha = np.exp(np.clip(self.log_alpha, -5, 2))

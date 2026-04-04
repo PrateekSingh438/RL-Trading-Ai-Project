@@ -73,12 +73,12 @@ class SACConfig:
     tau: float = 0.005  # Soft update coefficient
     alpha: float = 0.2  # Temperature parameter
     auto_alpha: bool = True  # Automatic entropy tuning
-    batch_size: int = 256
-    buffer_size: int = 1_000_000
+    batch_size: int = 64   # SAC uses per-sample NumPy loop; 64 balances speed & learning
+    buffer_size: int = 100_000
     hidden_dim: int = 256
     lstm_hidden_dim: int = 128
     num_lstm_layers: int = 2
-    learning_starts: int = 1000
+    learning_starts: int = 500
 
 
 @dataclass
