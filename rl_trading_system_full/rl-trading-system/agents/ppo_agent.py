@@ -63,7 +63,7 @@ if HAS_TORCH:
 
         def get_action(self, obs, deterministic=False):
             with torch.no_grad():
-                obs_t = torch.FloatTensor(obs)
+                obs_t = torch.FloatTensor(obs).to(next(self.parameters()).device)
                 mean, value, _ = self.forward(obs_t)
                 std = torch.exp(self.log_std.clamp(-3, 1))
                 if deterministic:
@@ -73,20 +73,21 @@ if HAS_TORCH:
                     action = dist.sample()
                 action = action.clamp(-1, 1)
                 log_prob = Normal(mean, std).log_prob(action).sum()
-                return action.numpy(), log_prob.item(), value.item()
+                return action.cpu().numpy(), log_prob.item(), value.item()
 
         def evaluate_actions(self, obs_batch, actions_batch):
             """Used during PPO update to recompute log_probs and values."""
+            device = next(self.parameters()).device
             means, values, _ = [], [], []
             for obs in obs_batch:
-                m, v, _ = self.forward(torch.FloatTensor(obs))
+                m, v, _ = self.forward(torch.FloatTensor(obs).to(device))
                 means.append(m)
                 values.append(v)
             means = torch.stack(means)
             values = torch.stack(values).squeeze(-1)
             std = torch.exp(self.log_std.clamp(-3, 1))
             dist = Normal(means, std)
-            actions_t = torch.FloatTensor(np.array(actions_batch))
+            actions_t = torch.FloatTensor(np.array(actions_batch)).to(device)
             log_probs = dist.log_prob(actions_t).sum(dim=-1)
             entropy = dist.entropy().sum(dim=-1).mean()
             return log_probs, values, entropy
@@ -148,7 +149,10 @@ class PPOAgent:
         self.training_history = {"episode_rewards": [], "policy_loss": [], "value_loss": [], "entropy": []}
 
         if HAS_TORCH:
-            self.network = LSTMActorCritic(obs_dim, action_dim, hidden_dim, lstm_hidden_dim, num_lstm_layers)
+            # Resolve device from config
+            from config.settings import CONFIG
+            self.device = torch.device(CONFIG.training.device if torch.cuda.is_available() and CONFIG.training.device == "cuda" else "cpu")
+            self.network = LSTMActorCritic(obs_dim, action_dim, hidden_dim, lstm_hidden_dim, num_lstm_layers).to(self.device)
             self.optimizer = optim.Adam(self.network.parameters(), lr=learning_rate, eps=1e-5)
         else:
             from agents.networks import ActorCriticNetwork
@@ -183,9 +187,9 @@ class PPOAgent:
         obs = self.buffer.observations
         actions = np.array(self.buffer.actions)
         old_log_probs = np.array(self.buffer.log_probs)
-        returns_t = torch.FloatTensor(returns)
-        advantages_t = torch.FloatTensor(advantages)
-        old_lp_t = torch.FloatTensor(old_log_probs)
+        returns_t = torch.FloatTensor(returns).to(self.device)
+        advantages_t = torch.FloatTensor(advantages).to(self.device)
+        old_lp_t = torch.FloatTensor(old_log_probs).to(self.device)
 
         total_pl, total_vl, total_ent, n = 0, 0, 0, 0
 
@@ -234,7 +238,7 @@ class PPOAgent:
             return {}
         last_obs = self.buffer.observations[-1]
         _, _, last_val = self.network.get_action(last_obs)
-        returns, advantages = self.buffer.compute_gae(self.gamma, self.gae_lambda, last_val)
+        _returns, advantages = self.buffer.compute_gae(self.gamma, self.gae_lambda, last_val)
 
         noise_scale = self.lr * 0.1
         loss_approx = -np.mean(advantages)

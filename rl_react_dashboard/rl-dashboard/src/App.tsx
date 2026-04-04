@@ -62,7 +62,7 @@ function AuthInitializer({ children }: { children: React.ReactNode }) {
         setLoading(false);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [setUser, setLoading]);
 
   useEffect(() => {
     const handler = () => logout();

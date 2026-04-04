@@ -513,22 +513,28 @@ export default function TradeHistoryPage() {
               >
                 ← Prev
               </button>
-              {Array.from({ length: Math.min(pageCount, 7) }, (_, i) => {
-                const n = i + 1;
-                return (
-                  <button
-                    key={n}
-                    onClick={() => setPage(n)}
-                    className={`rounded-md w-7 h-7 text-[11px] font-medium transition-colors ${
-                      page === n
-                        ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
-                        : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
-                    }`}
-                  >
-                    {n}
-                  </button>
-                );
-              })}
+              {(() => {
+                const maxVisible = 7;
+                let start = Math.max(1, page - Math.floor(maxVisible / 2));
+                const end = Math.min(pageCount, start + maxVisible - 1);
+                start = Math.max(1, end - maxVisible + 1);
+                return Array.from({ length: end - start + 1 }, (_, i) => {
+                  const n = start + i;
+                  return (
+                    <button
+                      key={n}
+                      onClick={() => setPage(n)}
+                      className={`rounded-md w-7 h-7 text-[11px] font-medium transition-colors ${
+                        page === n
+                          ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+                          : "text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  );
+                });
+              })()}
               <button
                 disabled={page === pageCount}
                 onClick={() => setPage((p) => p + 1)}

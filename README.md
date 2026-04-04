@@ -1,6 +1,6 @@
 # Risk-Aware Multi-Asset RL Trading System
 
-A production-grade Reinforcement Learning trading system using a **PPO + SAC ensemble with LSTM**, featuring real-time market data, FinBERT AI sentiment analysis, Groq-powered portfolio analysis, regime detection, and a live React dashboard.
+A production-grade Reinforcement Learning trading system using a **PPO + SAC ensemble with LSTM**, featuring real-time market data, FinBERT AI sentiment analysis, Groq-powered portfolio analysis, regime detection, GPU acceleration support, and a live React dashboard.
 
 ---
 
@@ -13,6 +13,7 @@ A production-grade Reinforcement Learning trading system using a **PPO + SAC ens
 - [Backend](#backend)
   - [Setup](#backend-setup)
   - [Configuration](#configuration)
+  - [GPU Acceleration](#gpu-acceleration)
   - [Training Pipeline](#training-pipeline)
   - [Running the API Server](#running-the-api-server)
 - [Frontend](#frontend)
@@ -43,6 +44,7 @@ This system trains RL agents to trade a portfolio of stocks, then runs them live
 - Broadcasts metrics, trade signals, prices, news, and regime changes over WebSocket
 - Explains every trade decision: technical signals + sentiment + regime + agent consensus
 - Provides an **AI Portfolio Analyst** panel powered by Groq (Llama 3.1, free tier) for streaming natural-language portfolio reports
+- Supports **GPU acceleration** — toggle between CPU and CUDA from the Settings dashboard with real-time device detection and error reporting
 
 **Default universe:** AAPL · GOOGL · MSFT · NFLX · TSLA (configurable)
 
@@ -81,7 +83,8 @@ This system trains RL agents to trade a portfolio of stocks, then runs them live
 │  ├ 14+ Indicators   │
 │  ├ RegimeDetector   │
 │  ├ RiskManager      │
-│  └ CompositeReward  │
+│  ├ CompositeReward  │
+│  └ GPU/CPU toggle   │
 └─────────────────────┘
 ```
 
@@ -121,7 +124,8 @@ rl_trading_system/
 │       ├── sentiment/
 │       │   └── analyzer.py           # FinBERT AI sentiment + live news fetcher
 │       ├── evaluation/
-│       │   └── metrics.py            # Sharpe, Sortino, Calmar, alpha, beta, …
+│       │   ├── metrics.py            # Sharpe, Sortino, Calmar, alpha, beta, …
+│       │   └── walk_forward.py       # Walk-forward backtester (train-test sliding window)
 │       ├── training/
 │       │   └── pipeline.py           # End-to-end training orchestrator
 │       ├── server/
@@ -258,12 +262,11 @@ CONFIG.trading.max_drawdown_threshold  = 0.15        # 15% → halt
 **Reward weights:**
 
 ```python
-CONFIG.reward.w1 = 0.30   # Annualised return
-CONFIG.reward.w2 = 0.20   # Downside deviation penalty
-CONFIG.reward.w3 = 0.15   # Differential return vs benchmark
-CONFIG.reward.w4 = 0.15   # Treynor ratio
-CONFIG.reward.w5 = 0.15   # Sharpe ratio
-CONFIG.reward.w6 = 0.05   # Portfolio entropy (diversification bonus)
+CONFIG.reward.w1 = 0.35   # Annualised return
+CONFIG.reward.w2 = 0.25   # Downside deviation penalty
+CONFIG.reward.w3 = 0.20   # Differential return vs benchmark
+CONFIG.reward.w4 = 0.20   # Treynor ratio
+# Additional weights w5 (Sharpe) and w6 (entropy) are internal to CompositeReward
 ```
 
 **Agent hyperparameters:**
@@ -284,6 +287,32 @@ CONFIG.sac.alpha           = 0.2
 CONFIG.sac.auto_alpha      = True
 CONFIG.sac.buffer_size     = 1_000_000
 ```
+
+### GPU Acceleration
+
+The system supports NVIDIA CUDA GPU acceleration for PyTorch-based PPO training. GPU can be toggled from the **Settings** page in the dashboard or via the API:
+
+```bash
+# Check GPU availability
+curl http://localhost:8000/api/v1/device
+
+# Switch to GPU
+curl -X POST http://localhost:8000/api/v1/device \
+  -H "Content-Type: application/json" \
+  -d '{"device": "cuda"}'
+
+# Switch back to CPU
+curl -X POST http://localhost:8000/api/v1/device \
+  -H "Content-Type: application/json" \
+  -d '{"device": "cpu"}'
+```
+
+**Requirements for GPU:**
+- NVIDIA GPU with CUDA support
+- PyTorch installed with CUDA (`pip install torch --index-url https://download.pytorch.org/whl/cu121`)
+- CUDA drivers installed
+
+If GPU is not available, the dashboard shows a clear error message and training continues on CPU.
 
 ### Training Pipeline
 
@@ -359,6 +388,8 @@ npm run build    # → dist/
 | **Sentiment tab** | Dominant sentiment over last 50 signals; per-symbol breakdown |
 | **News tab** | Real headlines (`● LIVE`) or simulated (`SIM`); `AI` badge for FinBERT-scored items; manual refresh button |
 | **Features tab** | Top-10 feature importance bars |
+| **Settings: GPU toggle** | Switch CPU/CUDA with auto-detection; shows GPU name, VRAM, and error messages |
+| **Settings: Training config** | Episodes, timesteps/episode, learning rate, batch size, gamma — all configurable from UI |
 
 ---
 
@@ -403,6 +434,13 @@ All endpoints: `/api/v1/…`
 | GET | `/market/history/{symbol}` | OHLCV (last 500 bars) |
 | GET | `/market/live` | Live prices `{symbol: {price, change, change_pct, simulated}}` |
 | GET | `/market/regime` | `{current: string, timestamp}` |
+
+### Device (GPU/CPU)
+
+| Method | Endpoint | Body | Response |
+|--------|----------|------|----------|
+| GET | `/device` | — | `{available, device, name, vram_mb, error}` |
+| POST | `/device` | `{device: "cpu"\|"cuda"}` | `{available, device, name, error}` |
 
 ### Sentiment
 

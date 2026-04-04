@@ -112,6 +112,7 @@ class TrainingConfig:
     n_eval_episodes: int = 5
     use_optuna: bool = False
     optuna_n_trials: int = 50
+    device: str = "cpu"  # "cpu" or "cuda"
 
 
 @dataclass

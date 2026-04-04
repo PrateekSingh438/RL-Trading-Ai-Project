@@ -160,6 +160,17 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  // GPU / device state
+  const [deviceInfo, setDeviceInfo] = useState<{
+    available: boolean;
+    device: string;
+    name: string | null;
+    vram_mb?: number;
+    error: string | null;
+  }>({ available: false, device: "cpu", name: null, error: null });
+  const [deviceLoading, setDeviceLoading] = useState(false);
+  const [deviceError, setDeviceError] = useState("");
+
   useEffect(() => {
     fetch(`${API}/profile`)
       .then((r) => r.json())
@@ -167,7 +178,36 @@ export default function SettingsPage() {
         if (d.data) setProfile((prev) => ({ ...prev, ...d.data }));
       })
       .catch(() => {});
+    // Fetch GPU / device info
+    fetch(`${API}/device`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.data) setDeviceInfo(d.data);
+      })
+      .catch(() => {});
   }, []);
+
+  const handleDeviceSwitch = async (target: "cpu" | "cuda") => {
+    setDeviceLoading(true);
+    setDeviceError("");
+    try {
+      const r = await fetch(`${API}/device`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device: target }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setDeviceInfo(d.data);
+      } else {
+        setDeviceError(d.detail || "Failed to switch device");
+      }
+    } catch {
+      setDeviceError("Backend offline");
+    } finally {
+      setDeviceLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -360,6 +400,77 @@ export default function SettingsPage() {
                 </button>
               );
             })}
+          </div>
+        </Section>
+
+        {/* ── Compute Device (GPU / CPU) ─────────────── */}
+        <Section icon="⚡" title="Compute Device" subtitle="Switch between CPU and GPU for training acceleration">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {(["cpu", "cuda"] as const).map((dev) => {
+                const active = deviceInfo.device === dev;
+                const isGpu = dev === "cuda";
+                const disabled = isGpu && !deviceInfo.available;
+                return (
+                  <button
+                    key={dev}
+                    onClick={() => !disabled && !deviceLoading && handleDeviceSwitch(dev)}
+                    disabled={disabled || deviceLoading}
+                    className={`relative rounded-xl border p-4 text-left transition-all ${
+                      disabled
+                        ? "opacity-40 cursor-not-allowed border-neutral-200 dark:border-neutral-700/60"
+                        : active
+                          ? "border-emerald-500 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-500/10 dark:to-teal-500/10 shadow-sm"
+                          : "border-neutral-200 dark:border-neutral-700/60 hover:border-neutral-300 dark:hover:border-neutral-600 cursor-pointer"
+                    }`}
+                  >
+                    {active && (
+                      <div className="absolute top-2.5 right-2.5 h-5 w-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                        <span className="text-white text-[9px] font-black">✓</span>
+                      </div>
+                    )}
+                    <div className="text-lg mb-1">{isGpu ? "🖥" : "💻"}</div>
+                    <div className={`text-[13px] font-semibold ${active ? "text-emerald-700 dark:text-emerald-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                      {isGpu ? "GPU (CUDA)" : "CPU"}
+                    </div>
+                    <div className="text-[10px] text-neutral-400 mt-0.5 leading-tight">
+                      {isGpu
+                        ? deviceInfo.available
+                          ? `${deviceInfo.name} · ${deviceInfo.vram_mb ?? "?"}MB VRAM`
+                          : "No compatible GPU detected"
+                        : "Default · Works everywhere"}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {deviceLoading && (
+              <div className="flex items-center gap-2 text-[11px] text-neutral-500">
+                <span className="h-3 w-3 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                Switching device…
+              </div>
+            )}
+
+            {deviceError && (
+              <div className="rounded-xl border border-red-300 dark:border-red-500/30 bg-red-50 dark:bg-red-500/5 px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <span className="text-red-500 text-sm shrink-0 mt-0.5">⚠</span>
+                  <div>
+                    <div className="text-[12px] font-semibold text-red-700 dark:text-red-400">GPU not available</div>
+                    <div className="text-[11px] text-red-600/80 dark:text-red-400/70 mt-0.5">{deviceError}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!deviceInfo.available && !deviceError && (
+              <div className="rounded-xl border border-amber-300/40 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/5 px-4 py-2.5">
+                <div className="text-[11px] text-amber-700 dark:text-amber-400">
+                  GPU acceleration requires an NVIDIA GPU with CUDA support and PyTorch installed with CUDA.
+                </div>
+              </div>
+            )}
           </div>
         </Section>
 

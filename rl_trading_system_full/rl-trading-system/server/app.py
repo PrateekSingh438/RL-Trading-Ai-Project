@@ -12,7 +12,8 @@ Improvements over v3:
   • Training speed: configurable n_episodes, early-stop on max-DD
   • CORS open; JWT auth; demo user built-in
 """
-import os, sys, json, time, asyncio, hashlib, threading
+import os, sys, time, asyncio, hashlib, threading
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -24,7 +25,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -32,7 +33,7 @@ import uvicorn
 import numpy as np
 
 from config.settings import CONFIG
-from data.pipeline import fetch_data, prepare_multi_stock_data, normalize_features, add_technical_indicators
+from data.pipeline import fetch_data, prepare_multi_stock_data, normalize_features
 from env.trading_env import TradingEnv
 from agents.ensemble import EnsembleAgent
 from sentiment.analyzer import LiveNewsFetcher, NewsGenerator, SentimentAnalyzer, TradeExplainer
@@ -43,7 +44,19 @@ try:
 except ImportError:
     HAS_EXTRA = False
 
-app = FastAPI(title="RL Trading System API", version="4.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    add_log("INFO", "RL Trading System API v4.0", "system")
+    add_log("INFO",
+            f"Assets: {CONFIG.data.tickers} | PyTorch: {_has_torch()} | Extra indicators: {HAS_EXTRA}",
+            "system")
+    threading.Thread(target=_refresh_live_prices, daemon=True).start()
+    threading.Thread(target=_refresh_live_news,   daemon=True).start()
+    asyncio.create_task(_push_loop())
+    add_log("INFO", "Live price & news refresh threads started", "system")
+    yield
+
+app = FastAPI(title="RL Trading System API", version="4.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
@@ -65,7 +78,9 @@ profile_data = {
     "asset_classes": ["stocks"], "selected_model": "ensemble",
     "capital_allocation": 1_000_000, "max_drawdown": 0.15,
     "stop_loss_pct": 0.05, "take_profit_pct": 0.15,
-    "reward_weights": {"w1": 0.30, "w2": 0.20, "w3": 0.15, "w4": 0.15, "w5": 0.15, "w6": 0.05},
+    "reward_weights": {"w1": 0.35, "w2": 0.25, "w3": 0.20, "w4": 0.20},
+    "n_episodes": 500, "n_steps": 2048, "learning_rate": 0.0003,
+    "batch_size": 64, "gamma": 0.99, "gae_lambda": 0.95,
     "created_at": "2024-01-01T00:00:00Z", "updated_at": "2024-01-01T00:00:00Z",
 }
 
@@ -114,6 +129,24 @@ def _has_torch() -> bool:
         return False
 
 
+def _gpu_info() -> dict:
+    """Return GPU availability and device info."""
+    info = {"available": False, "device": CONFIG.training.device, "name": None, "error": None}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            info["available"] = True
+            info["name"] = torch.cuda.get_device_name(0)
+            info["vram_mb"] = round(torch.cuda.get_device_properties(0).total_mem / 1024 / 1024)
+        else:
+            info["error"] = "CUDA not available — no compatible NVIDIA GPU detected or CUDA drivers not installed"
+    except ImportError:
+        info["error"] = "PyTorch not installed — install pytorch with CUDA support for GPU acceleration"
+    except Exception as e:
+        info["error"] = str(e)
+    return info
+
+
 def create_token(uid: str) -> str:
     t = hashlib.sha256(f"{uid}:s:{time.time()}".encode()).hexdigest()
     SESSIONS[t] = {"user_id": uid, "expires": time.time() + 3600}
@@ -155,6 +188,12 @@ class ProfileUpdate(BaseModel):
     stop_loss_pct: Optional[float] = None
     take_profit_pct: Optional[float] = None
     reward_weights: Optional[dict] = None
+    n_episodes: Optional[int] = None
+    n_steps: Optional[int] = None
+    learning_rate: Optional[float] = None
+    batch_size: Optional[int] = None
+    gamma: Optional[float] = None
+    gae_lambda: Optional[float] = None
 
 class AgentCommand(BaseModel):
     action: str
@@ -629,7 +668,7 @@ async def signup(req: SignupRequest):
     USERS[req.email] = {
         "id": uid, "email": req.email, "name": req.name,
         "password_hash": hashlib.sha256(req.password.encode()).hexdigest(),
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(datetime.now().astimezone().tzinfo).isoformat(),
     }
     return ok({"accessToken": create_token(uid),
                "user": {"id": uid, "email": req.email, "name": req.name}})
@@ -651,7 +690,7 @@ async def get_profile():
 async def update_profile(req: ProfileUpdate):
     u = req.model_dump(exclude_none=True)
     profile_data.update(u)
-    profile_data["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    profile_data["updated_at"] = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
     if "reward_weights" in u:
         w = u["reward_weights"]
         CONFIG.reward.w1 = w.get("w1", CONFIG.reward.w1)
@@ -664,6 +703,20 @@ async def update_profile(req: ProfileUpdate):
         CONFIG.trading.stop_loss_pct = u["stop_loss_pct"]
     if "take_profit_pct" in u:
         CONFIG.trading.take_profit_pct = u["take_profit_pct"]
+    if "capital_allocation" in u:
+        CONFIG.trading.initial_capital = u["capital_allocation"]
+    if "learning_rate" in u:
+        CONFIG.ppo.learning_rate = u["learning_rate"]
+        CONFIG.sac.learning_rate = u["learning_rate"]
+    if "batch_size" in u:
+        CONFIG.ppo.batch_size = u["batch_size"]
+    if "gamma" in u:
+        CONFIG.ppo.gamma = u["gamma"]
+        CONFIG.sac.gamma = u["gamma"]
+    if "gae_lambda" in u:
+        CONFIG.ppo.gae_lambda = u["gae_lambda"]
+    if "n_steps" in u:
+        CONFIG.ppo.n_steps = u["n_steps"]
     add_log("INFO", f"Profile updated: {list(u.keys())}", "config")
     return ok(profile_data)
 
@@ -932,6 +985,48 @@ async def sentiment_status():
         "scorer": "finbert" if available else "keyword",
     })
 
+@app.get("/api/v1/device")
+async def get_device():
+    """Return current compute device and GPU availability."""
+    return ok(_gpu_info())
+
+
+@app.post("/api/v1/device")
+async def set_device(body: dict):
+    """Switch between CPU and GPU. Returns error if GPU not available."""
+    requested = body.get("device", "cpu").lower()
+    if requested not in ("cpu", "cuda"):
+        raise HTTPException(400, f"Invalid device: {requested}. Use 'cpu' or 'cuda'.")
+
+    if requested == "cuda":
+        info = _gpu_info()
+        if not info["available"]:
+            raise HTTPException(400, info["error"] or "CUDA GPU not available")
+        # Move existing PyTorch models to GPU
+        try:
+            import torch
+            if trained_agent["agent"] and hasattr(trained_agent["agent"], "ppo"):
+                ppo = trained_agent["agent"].ppo
+                if hasattr(ppo, "network") and hasattr(ppo.network, "to"):
+                    ppo.network.to(torch.device("cuda"))
+            add_log("INFO", f"Switched to GPU: {info['name']}", "system")
+        except Exception as e:
+            raise HTTPException(500, f"Failed to move models to GPU: {e}")
+    else:
+        try:
+            import torch
+            if trained_agent["agent"] and hasattr(trained_agent["agent"], "ppo"):
+                ppo = trained_agent["agent"].ppo
+                if hasattr(ppo, "network") and hasattr(ppo.network, "to"):
+                    ppo.network.to(torch.device("cpu"))
+            add_log("INFO", "Switched to CPU", "system")
+        except Exception:
+            pass
+
+    CONFIG.training.device = requested
+    return ok(_gpu_info())
+
+
 @app.get("/api/v1/logs")
 async def logs(level: str = "ALL", limit: int = 100):
     if level == "ALL":
@@ -947,7 +1042,7 @@ async def ws_endpoint(ws: WebSocket):
     try:
         while True:
             try:
-                msg = await asyncio.wait_for(ws.receive_text(), timeout=30.0)
+                await asyncio.wait_for(ws.receive_text(), timeout=30.0)
             except asyncio.TimeoutError:
                 await ws.send_json({"type": "ping", "timestamp": time.time() * 1000})
     except WebSocketDisconnect:
@@ -957,24 +1052,6 @@ async def ws_endpoint(ws: WebSocket):
     finally:
         if ws in ws_connections:
             ws_connections.remove(ws)
-
-# ─── Startup ──────────────────────────────────────────────────────────────────
-
-@app.on_event("startup")
-async def startup():
-    add_log("INFO", "RL Trading System API v4.0", "system")
-    add_log("INFO",
-            f"Assets: {CONFIG.data.tickers} | PyTorch: {_has_torch()} | Extra indicators: {HAS_EXTRA}",
-            "system")
-
-    # Start background threads
-    threading.Thread(target=_refresh_live_prices, daemon=True).start()
-    threading.Thread(target=_refresh_live_news,   daemon=True).start()
-
-    # Start async push loop
-    asyncio.create_task(_push_loop())
-    add_log("INFO", "Live price & news refresh threads started", "system")
-
 
 if __name__ == "__main__":
     print("╔════════════════════════════════════════════════════╗")
